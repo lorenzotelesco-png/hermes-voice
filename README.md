@@ -1,6 +1,6 @@
 # Hermes Voice
 
-A hands-free, always-listening voice assistant web app - like ChatGPT Voice Mode - that runs entirely on your own server and connects to [Hermes Agent](https://github.com/opencode-ai/hermes).
+A hands-free, always-listening voice assistant web app - like ChatGPT Voice Mode - that runs entirely on your own server and connects to [Hermes Agent](https://github.com/NousResearch/hermes-agent).
 
 Speak → Whisper STT → Hermes Agent → Piper TTS → plays back. No button presses. VAD detects speech automatically.
 
@@ -27,7 +27,7 @@ Works as a PWA from iPhone Safari over HTTPS (e.g. Cloudflare Tunnel).
 | Component | Notes |
 |-----------|-------|
 | Python 3.10+ | Server-side |
-| [Hermes Agent](https://github.com/opencode-ai/hermes) | Must be running with `API_SERVER_ENABLED=true` |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | Must be running with `API_SERVER_ENABLED=true` |
 | [Piper TTS](https://github.com/rhasspy/piper) | Binary in PATH + ONNX model |
 | HTTPS | Required by browsers for microphone access - use Cloudflare Tunnel, Caddy, or nginx |
 
