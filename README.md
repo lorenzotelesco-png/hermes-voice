@@ -174,3 +174,6 @@ Flask server (port 5000)
 ## License
 
 MIT
+
+<img width="1536" height="1024" alt="Hermes pitch" src="https://github.com/user-attachments/assets/8748d514-0c9d-45c3-b8fa-d3aa804b48fa" />
+
