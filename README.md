@@ -1,6 +1,6 @@
 # Hermes Voice
 
-A hands-free, always-listening voice assistant web app — like ChatGPT Voice Mode — that runs entirely on your own server and connects to [Hermes Agent](https://github.com/opencode-ai/hermes).
+A hands-free, always-listening voice assistant web app - like ChatGPT Voice Mode — that runs entirely on your own server and connects to [Hermes Agent](https://github.com/opencode-ai/hermes).
 
 Speak → Whisper STT → Hermes Agent → Piper TTS → plays back. No button presses. VAD detects speech automatically.
 
@@ -12,12 +12,12 @@ Works as a PWA from iPhone Safari over HTTPS (e.g. Cloudflare Tunnel).
 
 ## Features
 
-- **Always-listening VAD** — adaptive noise floor calibration, no push-to-talk
-- **Server-side STT** — faster-whisper (small, int8, CPU-friendly)
-- **Local TTS** — Piper (offline, low-latency, multiple languages/voices)
-- **iOS Safari compatible** — AudioContext unlock pattern, correct MIME handling
-- **Discord mirroring** — optionally mirrors every voice exchange to a Discord thread
-- **Zero frontend dependencies** — pure Web Audio API, no npm, no build step
+- **Always-listening VAD** - adaptive noise floor calibration, no push-to-talk
+- **Server-side STT** - faster-whisper (small, int8, CPU-friendly)
+- **Local TTS** - Piper (offline, low-latency, multiple languages/voices)
+- **iOS Safari compatible** - AudioContext unlock pattern, correct MIME handling
+- **Discord mirroring** - optionally mirrors every voice exchange to a Discord thread
+- **Zero frontend dependencies** - pure Web Audio API, no npm, no build step
 
 ---
 
@@ -28,7 +28,7 @@ Works as a PWA from iPhone Safari over HTTPS (e.g. Cloudflare Tunnel).
 | Python 3.10+ | Server-side |
 | [Hermes Agent](https://github.com/opencode-ai/hermes) | Must be running with `API_SERVER_ENABLED=true` |
 | [Piper TTS](https://github.com/rhasspy/piper) | Binary in PATH + ONNX model |
-| HTTPS | Required by browsers for microphone access — use Cloudflare Tunnel, Caddy, or nginx |
+| HTTPS | Required by browsers for microphone access - use Cloudflare Tunnel, Caddy, or nginx |
 
 ---
 
