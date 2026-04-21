@@ -3,6 +3,12 @@ let audioCtx, analyser, stream, recorder, chunks = [];
 let isSpeaking = false, isProcessing = false, isActive = false, isMuted = false;
 let silenceTimer = null, rafId = null;
 let history = [], currentAudio = null, sessionId = null;
+
+function makeSessionId() {
+  // Generate a stable UUID for this voice session (used for Discord thread tracking)
+  return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
+}
 let volume = 0;
 let noiseFloor = 5;      // calibrated dynamically
 let calibrating = true;
@@ -69,6 +75,7 @@ async function startSession() {
   document.getElementById('start-screen').style.display = 'none';
   document.getElementById('main-screen').style.display  = 'flex';
   isActive = true;
+  sessionId = makeSessionId();   // stable ID for this entire voice session
 
   // No custom sampleRate — let Safari use its native rate
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -202,7 +209,7 @@ async function handleAudio(blob) {
     });
     const chatData = await chatRes.json();
     if (chatData.error) { showError('Chat: ' + chatData.error); return; }
-    if (chatData.session_id) sessionId = chatData.session_id;
+    // sessionId stays the one generated at session start — never overwrite it
     const reply = chatData.reply;
     if (!reply) return;
     history.push({ role: 'assistant', content: reply });

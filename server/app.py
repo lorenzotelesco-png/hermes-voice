@@ -108,7 +108,7 @@ def mirror_to_discord(user_text, hermes_reply, discord_state):
     except Exception as e:
         print(f"[MIRROR] {e}")
 
-# Per-session Discord thread state (keyed by Hermes session_id)
+# Per-session Discord thread state (keyed by session_id)
 _discord_states = {}
 
 # ── Routes ────────────────────────────────────────────────────────
@@ -143,36 +143,35 @@ def transcribe():
 def chat():
     data       = request.get_json(force=True)
     history    = data.get("history", [])
-    session_id = data.get("session_id")
+    session_id = data.get("session_id")   # local ID for Discord thread tracking only
     user_text  = history[-1]["content"] if history else ""
 
     try:
+        # Send history only — no X-Hermes-Session-Id header.
+        # Context is carried by the messages array (stateless OpenAI-compatible mode).
         payload = json.dumps({
             "model": "hermes",
             "messages": history,
             "max_tokens": 512,
         }).encode()
-        headers = {"Content-Type": "application/json"}
-        if session_id:
-            headers["X-Hermes-Session-Id"] = session_id
-
-        req = urllib.request.Request(HERMES_API, data=payload, headers=headers)
+        req = urllib.request.Request(HERMES_API, data=payload,
+                                     headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=60) as r:
             result = json.loads(r.read())
 
-        reply_raw    = result["choices"][0]["message"]["content"].strip()
-        resp_session = result.get("id", session_id)
-        reply        = clean_for_tts(reply_raw)
+        reply_raw = result["choices"][0]["message"]["content"].strip()
+        reply     = clean_for_tts(reply_raw)
         print(f"[HERMES] {repr(reply[:80])}")
 
-        state = _discord_states.setdefault(resp_session or "default", {})
+        # Keep the same session_id for Discord thread continuity
+        state = _discord_states.setdefault(session_id or "default", {})
         threading.Thread(
             target=mirror_to_discord,
             args=(user_text, reply_raw, state),
             daemon=True
         ).start()
 
-        return jsonify({"reply": reply, "session_id": resp_session})
+        return jsonify({"reply": reply, "session_id": session_id})
 
     except Exception as e:
         print(f"[CHAT ERROR] {e}")
