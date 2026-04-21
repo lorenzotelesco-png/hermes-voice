@@ -1,0 +1,32 @@
+# Environment — never commit real credentials
+.env
+
+# Piper models (large binary files)
+models/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Temp audio files
+*.webm
+*.m4a
+*.ogg
+*.mp3
+*.wav
+tmp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
