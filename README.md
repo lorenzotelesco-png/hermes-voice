@@ -6,7 +6,8 @@ Speak → Whisper STT → Hermes Agent → Piper TTS → plays back. No button p
 
 Works as a PWA from iPhone Safari over HTTPS (e.g. Cloudflare Tunnel).
 
-![demo](docs/demo.png)
+<img width="1536" height="1024" alt="Hermes pitch" src="https://github.com/user-attachments/assets/e7037983-b23e-4d62-87b0-79268a4fa48b" />
+
 
 ---
 
@@ -174,6 +175,3 @@ Flask server (port 5000)
 ## License
 
 MIT
-
-<img width="1536" height="1024" alt="Hermes pitch" src="https://github.com/user-attachments/assets/8748d514-0c9d-45c3-b8fa-d3aa804b48fa" />
-
