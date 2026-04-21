@@ -1,6 +1,6 @@
 # Hermes Voice
 
-A hands-free, always-listening voice assistant web app - like ChatGPT Voice Mode — that runs entirely on your own server and connects to [Hermes Agent](https://github.com/opencode-ai/hermes).
+A hands-free, always-listening voice assistant web app - like ChatGPT Voice Mode - that runs entirely on your own server and connects to [Hermes Agent](https://github.com/opencode-ai/hermes).
 
 Speak → Whisper STT → Hermes Agent → Piper TTS → plays back. No button presses. VAD detects speech automatically.
 
