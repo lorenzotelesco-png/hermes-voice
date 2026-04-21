@@ -8,34 +8,106 @@
   <meta name="apple-mobile-web-app-title" content="Hermes">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400&family=DM+Sans:ital,opsz,wght@0,9..40,200;0,9..40,300;0,9..40,400&display=swap" rel="stylesheet">
   <title>Hermes</title>
   <style>
+    :root {
+      --font-display: 'Cormorant Garamond', Georgia, serif;
+      --font-ui: 'DM Sans', system-ui, sans-serif;
+      --white: #ffffff;
+      --off-white: rgba(255,255,255,.9);
+      --subtle: rgba(255,255,255,.22);
+      --dim: rgba(255,255,255,.12);
+      --glow-idle:      0 0 0px transparent;
+      --glow-listen:    0 0 48px rgba(180,200,255,.13), 0 0 96px rgba(180,200,255,.06);
+      --glow-speak:     0 0 56px rgba(255,248,230,.18), 0 0 120px rgba(255,240,200,.08);
+      --glow-think:     0 0 32px rgba(200,200,255,.10);
+      --bg-idle:        radial-gradient(ellipse 70% 60% at 50% 46%, #0d0d0d 0%, #000 100%);
+      --bg-listen:      radial-gradient(ellipse 70% 60% at 50% 46%, #06080f 0%, #000 100%);
+      --bg-speak:       radial-gradient(ellipse 70% 60% at 50% 46%, #0e0b06 0%, #000 100%);
+      --bg-think:       radial-gradient(ellipse 70% 60% at 50% 46%, #08080e 0%, #000 100%);
+    }
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100%; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden; -webkit-tap-highlight-color: transparent; }
+
+    html, body {
+      height: 100%;
+      background: #000;
+      color: var(--white);
+      font-family: var(--font-ui);
+      overflow: hidden;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ── GRAIN OVERLAY ── */
+    body::after {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+      opacity: .028;
+      pointer-events: none;
+      z-index: 9998;
+    }
 
     /* ── START SCREEN ── */
     #start-screen {
       position: fixed; inset: 0;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      background: #000; z-index: 20; cursor: pointer; user-select: none;
+      background: #000;
+      z-index: 20; cursor: pointer; user-select: none;
     }
+
     #start-screen h1 {
-      font-size: 2.2rem; font-weight: 200; letter-spacing: .32em;
-      color: #fff; margin-bottom: 10px;
+      font-family: var(--font-display);
+      font-size: 3rem;
+      font-weight: 300;
+      letter-spacing: .52em;
+      color: var(--white);
+      margin-bottom: 14px;
+      margin-right: -.52em; /* optical centering with wide tracking */
+      animation: title-breathe 5s ease-in-out infinite;
     }
+
+    @keyframes title-breathe {
+      0%, 100% { opacity: .92; }
+      50%       { opacity: 1; }
+    }
+
     #start-screen p {
-      font-size: .72rem; color: rgba(255,255,255,.22);
-      letter-spacing: .22em; text-transform: uppercase;
+      font-family: var(--font-ui);
+      font-size: .66rem;
+      font-weight: 300;
+      color: rgba(255,255,255,.28);
+      letter-spacing: .3em;
+      text-transform: uppercase;
     }
+
+    /* thin horizontal rule between title and subtitle */
+    #start-screen .rule {
+      width: 1px;
+      height: 28px;
+      background: linear-gradient(to bottom, transparent, rgba(255,255,255,.18), transparent);
+      margin: 16px 0;
+    }
+
     #start-hint {
       position: absolute; bottom: 52px;
-      font-size: .7rem; color: rgba(255,255,255,.18);
-      letter-spacing: .16em; text-transform: uppercase;
-      animation: fade-hint 3s ease-in-out infinite;
+      font-family: var(--font-ui);
+      font-size: .62rem;
+      font-weight: 300;
+      color: rgba(255,255,255,.16);
+      letter-spacing: .22em;
+      text-transform: uppercase;
+      animation: fade-hint 3.5s ease-in-out infinite;
     }
+
     @keyframes fade-hint {
-      0%, 100% { opacity: 0; } 50% { opacity: 1; }
+      0%, 100% { opacity: 0; }
+      45%, 55%  { opacity: 1; }
     }
+
     #btn-start { display: none; }
 
     /* ── MAIN SCREEN ── */
@@ -43,60 +115,156 @@
       position: fixed; inset: 0;
       display: none; flex-direction: column;
       align-items: center; justify-content: center;
-      background: #000;
+      background: var(--bg-idle);
+      transition: background 1.2s ease;
+      animation: screen-in .7s cubic-bezier(.22,.8,.36,1) both;
     }
 
-    /* BLOBS */
+    @keyframes screen-in {
+      from { opacity: 0; transform: scale(.97); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+
+    body.idle      #main-screen { background: var(--bg-idle);   }
+    body.listening #main-screen { background: var(--bg-listen); }
+    body.speaking  #main-screen { background: var(--bg-speak);  }
+    body.thinking  #main-screen { background: var(--bg-think);  }
+
+    /* ── BLOBS ── */
     #blobs {
       display: flex; align-items: center; justify-content: center;
-      gap: 14px; margin-bottom: 52px;
+      gap: 16px; margin-bottom: 48px;
+      position: relative;
     }
-    .blob {
-      width: 68px; height: 78px;
+
+    /* ambient light diffusion behind blobs */
+    #blobs::before {
+      content: '';
+      position: absolute;
+      inset: -60px;
       border-radius: 50%;
-      background: #fff;
-      will-change: transform, opacity;
-      transition: background .4s;
+      transition: box-shadow 1s ease, opacity 1s ease;
+      pointer-events: none;
     }
 
-    /* LABEL */
+    body.listening #blobs::before { box-shadow: 0 0 120px 40px rgba(180,205,255,.07); }
+    body.speaking  #blobs::before { box-shadow: 0 0 140px 50px rgba(255,245,220,.08); }
+    body.thinking  #blobs::before { box-shadow: 0 0 80px 20px rgba(200,200,255,.05);  }
+
+    .blob {
+      width: 64px; height: 76px;
+      border-radius: 50%;
+      background: var(--white);
+      will-change: transform, opacity, box-shadow;
+      transition: background .6s ease, box-shadow .8s ease;
+    }
+
+    body.listening .blob { box-shadow: var(--glow-listen); }
+    body.speaking  .blob { box-shadow: var(--glow-speak);  }
+    body.thinking  .blob { box-shadow: var(--glow-think);  }
+
+    /* ── LABEL ── */
     #label {
-      font-size: .82rem; font-weight: 400;
-      letter-spacing: .1em; color: rgba(255,255,255,.38);
-      text-transform: uppercase; height: 20px;
+      font-family: var(--font-ui);
+      font-size: .7rem;
+      font-weight: 300;
+      letter-spacing: .18em;
+      color: rgba(255,255,255,.32);
+      text-transform: uppercase;
+      height: 20px;
       margin-bottom: 64px;
+      transition: color .6s ease;
     }
 
-    /* INTERRUPT hint */
+    body.speaking #label { color: rgba(255,248,230,.45); }
+    body.listening #label { color: rgba(210,225,255,.42); }
+
+    /* ── INTERRUPT HINT ── */
     #hint {
       position: absolute; top: 62%; left: 50%; transform: translateX(-50%);
-      font-size: .82rem; color: rgba(255,255,255,.28); letter-spacing: .05em;
-      opacity: 0; transition: opacity .4s; pointer-events: none;
+      font-family: var(--font-ui);
+      font-size: .7rem;
+      font-weight: 300;
+      color: rgba(255,255,255,.22);
+      letter-spacing: .08em;
+      opacity: 0; transition: opacity .5s ease;
+      pointer-events: none; white-space: nowrap;
     }
+
     body.speaking #hint { opacity: 1; }
 
-    /* BOTTOM CONTROLS */
+    /* ── CONTROLS ── */
     #controls {
-      position: absolute; bottom: 52px;
-      display: flex; align-items: center; justify-content: center; gap: 28px;
+      position: absolute; bottom: 48px;
+      display: flex; align-items: center; justify-content: center; gap: 20px;
     }
-    .ctrl {
-      width: 52px; height: 52px; border-radius: 50%; border: none;
-      display: flex; align-items: center; justify-content: center;
-      cursor: pointer; transition: transform .15s, opacity .2s;
-    }
-    .ctrl:active { transform: scale(.92); }
-    #btn-mute { background: rgba(255,255,255,.1); }
-    #btn-mute svg { width: 20px; height: 20px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; }
-    #btn-end  { background: #c0392b; }
-    #btn-end  svg { width: 18px; height: 18px; fill: #fff; }
 
-    /* ERROR TOAST */
+    .ctrl {
+      width: 54px; height: 54px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,.1);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      transition: transform .18s cubic-bezier(.34,1.56,.64,1),
+                  opacity .2s ease,
+                  border-color .3s ease,
+                  background .3s ease;
+      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(16px);
+    }
+
+    .ctrl:active { transform: scale(.88); }
+
+    #btn-mute {
+      background: rgba(255,255,255,.07);
+    }
+    #btn-mute:hover {
+      background: rgba(255,255,255,.12);
+      border-color: rgba(255,255,255,.2);
+    }
+    #btn-mute svg {
+      width: 19px; height: 19px;
+      fill: none; stroke: rgba(255,255,255,.75);
+      stroke-width: 1.6; stroke-linecap: round;
+      transition: stroke .3s ease;
+    }
+    #btn-mute[style*="0.35"] svg { stroke: rgba(255,255,255,.35); }
+
+    #btn-end {
+      background: rgba(180,40,35,.75);
+      border-color: rgba(255,80,70,.2);
+      width: 58px; height: 58px;
+    }
+    #btn-end:hover {
+      background: rgba(200,50,45,.85);
+      border-color: rgba(255,80,70,.35);
+    }
+    #btn-end svg {
+      width: 16px; height: 16px; fill: rgba(255,255,255,.9);
+    }
+
+    /* ── ERROR TOAST ── */
     #error {
       position: fixed; top: 20px; left: 16px; right: 16px;
-      background: rgba(180,30,30,.9); backdrop-filter: blur(8px);
-      color: #fca5a5; padding: 11px 16px; border-radius: 12px;
-      font-size: .82rem; text-align: center; display: none; z-index: 99;
+      background: rgba(160,25,25,.88);
+      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,80,70,.2);
+      color: rgba(255,200,200,.9);
+      padding: 12px 18px;
+      border-radius: 14px;
+      font-family: var(--font-ui);
+      font-size: .76rem;
+      font-weight: 300;
+      text-align: center;
+      display: none;
+      z-index: 9999;
+      animation: toast-in .3s cubic-bezier(.34,1.56,.64,1);
+    }
+
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(-8px) scale(.97); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
     }
   </style>
 </head>
@@ -107,6 +275,7 @@
 <!-- START -->
 <div id="start-screen" onclick="startSession()">
   <h1>HERMES</h1>
+  <div class="rule"></div>
   <p>assistente vocale</p>
   <button id="btn-start" style="display:none"></button>
   <span id="start-hint">tocca per iniziare</span>
