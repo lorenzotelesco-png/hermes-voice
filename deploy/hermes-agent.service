@@ -1,0 +1,18 @@
+[Unit]
+Description=Hermes Agent Gateway (port 8642)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/.hermes/hermes-agent
+EnvironmentFile=-/root/.hermes/.env
+Environment=OPENROUTER_API_KEY=your_openrouter_key_here
+ExecStart=/root/.hermes/hermes-agent/venv/bin/python cli.py --gateway --replace
+Restart=always
+RestartSec=5
+StartLimitBurst=5
+SyslogIdentifier=hermes-agent
+
+[Install]
+WantedBy=multi-user.target

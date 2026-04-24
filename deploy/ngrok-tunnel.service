@@ -1,0 +1,14 @@
+[Unit]
+Description=ngrok Tunnel (hermes-voice fixed URL)
+After=network.target hermes-voice.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/ngrok http --url=your-fixed-subdomain.ngrok-free.app 5000
+Restart=always
+RestartSec=5
+SyslogIdentifier=ngrok-tunnel
+
+[Install]
+WantedBy=multi-user.target

@@ -21,13 +21,13 @@
       --subtle: rgba(255,255,255,.22);
       --dim: rgba(255,255,255,.12);
       --glow-idle:      0 0 0px transparent;
-      --glow-listen:    0 0 48px rgba(180,200,255,.13), 0 0 96px rgba(180,200,255,.06);
-      --glow-speak:     0 0 56px rgba(255,248,230,.18), 0 0 120px rgba(255,240,200,.08);
-      --glow-think:     0 0 32px rgba(200,200,255,.10);
-      --bg-idle:        radial-gradient(ellipse 70% 60% at 50% 46%, #0d0d0d 0%, #000 100%);
-      --bg-listen:      radial-gradient(ellipse 70% 60% at 50% 46%, #06080f 0%, #000 100%);
-      --bg-speak:       radial-gradient(ellipse 70% 60% at 50% 46%, #0e0b06 0%, #000 100%);
-      --bg-think:       radial-gradient(ellipse 70% 60% at 50% 46%, #08080e 0%, #000 100%);
+      --glow-listen:    0 0 56px rgba(180,200,255,.18), 0 0 110px rgba(180,200,255,.08);
+      --glow-speak:     0 0 64px rgba(255,248,230,.22), 0 0 130px rgba(255,240,200,.10);
+      --glow-think:     0 0 40px rgba(200,200,255,.14);
+      --bg-idle:        #000;
+      --bg-listen:      #000;
+      --bg-speak:       #000;
+      --bg-think:       #000;
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -137,19 +137,6 @@
       position: relative;
     }
 
-    /* ambient light diffusion behind blobs */
-    #blobs::before {
-      content: '';
-      position: absolute;
-      inset: -60px;
-      border-radius: 50%;
-      transition: box-shadow 1s ease, opacity 1s ease;
-      pointer-events: none;
-    }
-
-    body.listening #blobs::before { box-shadow: 0 0 120px 40px rgba(180,205,255,.07); }
-    body.speaking  #blobs::before { box-shadow: 0 0 140px 50px rgba(255,245,220,.08); }
-    body.thinking  #blobs::before { box-shadow: 0 0 80px 20px rgba(200,200,255,.05);  }
 
     .blob {
       width: 64px; height: 76px;
@@ -159,9 +146,9 @@
       transition: background .6s ease, box-shadow .8s ease;
     }
 
-    body.listening .blob { box-shadow: var(--glow-listen); }
-    body.speaking  .blob { box-shadow: var(--glow-speak);  }
-    body.thinking  .blob { box-shadow: var(--glow-think);  }
+    body.listening .blob { background: #C6D8F8; box-shadow: var(--glow-listen); }
+    body.speaking  .blob { background: #F8EDD4; box-shadow: var(--glow-speak);  }
+    body.thinking  .blob { background: #C9C6F2; box-shadow: var(--glow-think);  }
 
     /* ── LABEL ── */
     #label {

@@ -1,0 +1,17 @@
+[Unit]
+Description=Hermes Voice Flask Server (port 5000)
+After=network.target hermes-agent.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/hermes-voice
+EnvironmentFile=-/root/hermes-voice/.env
+ExecStart=/usr/bin/python3 server/app.py
+Restart=always
+RestartSec=5
+StartLimitBurst=5
+SyslogIdentifier=hermes-voice
+
+[Install]
+WantedBy=multi-user.target

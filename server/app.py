@@ -22,7 +22,7 @@ STT_LANGUAGE = os.environ.get("STT_LANGUAGE",        "it")
 # Discord mirroring — optional. Set both vars to enable.
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "")
 DISCORD_TOKEN   = os.environ.get("DISCORD_BOT_TOKEN",   "")
-DISCORD_UA      = "DiscordBot (https://github.com/your-username/hermes-voice, 1.0)"
+DISCORD_UA      = "DiscordBot (https://github.com/lorenzotelesco-png/hermes-voice, 1.0)"
 DISCORD_ENABLED = bool(DISCORD_WEBHOOK and DISCORD_TOKEN)
 
 MIME_EXT = {
@@ -147,12 +147,28 @@ def chat():
     user_text  = history[-1]["content"] if history else ""
 
     try:
-        # Send history only — no X-Hermes-Session-Id header.
-        # Context is carried by the messages array (stateless OpenAI-compatible mode).
+        # Prepend system prompt — enforces Italian and voice-friendly style.
+        # Done here so it applies to every request without touching Hermes config.
+        system_prompt = {
+            "role": "system",
+            "content": (
+                "Sei Hermes, un assistente vocale personale. "
+                "Rispondi SEMPRE e SOLO in italiano, qualunque cosa scriva l'utente. "
+                "Le tue risposte vengono lette ad alta voce da un sintetizzatore vocale: "
+                "usa frasi brevi e naturali, come in una conversazione parlata. "
+                "Non usare mai markdown, asterischi, elenchi puntati, simboli speciali o codice. "
+                "Sii conciso: massimo 2-3 frasi per risposta, salvo quando l'utente chiede esplicitamente dettagli."
+            ),
+        }
+        messages = [system_prompt] + history
+
+        # Send messages to Hermes Gateway (stateless OpenAI-compatible mode).
+        # Context is carried by the messages array; Hermes handles fallback to
+        # Ollama locally when the cloud model is rate-limited or unavailable.
         payload = json.dumps({
             "model": "hermes",
-            "messages": history,
-            "max_tokens": 512,
+            "messages": messages,
+            "max_tokens": 300,
         }).encode()
         req = urllib.request.Request(HERMES_API, data=payload,
                                      headers={"Content-Type": "application/json"})

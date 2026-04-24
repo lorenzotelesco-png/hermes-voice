@@ -130,7 +130,7 @@ function toggleMute() {
 }
 
 // ── VAD ───────────────────────────────────────────────────────────
-const SILENCE_MS = 1500;
+const SILENCE_MS = 1000;
 
 function getRMS() {
   const d = new Uint8Array(analyser.frequencyBinCount);
@@ -180,12 +180,54 @@ function endSpeech() {
 }
 
 // ── PIPELINE ──────────────────────────────────────────────────────
+let ttsInterrupted = false;
+
 function mimeToExt(mime) {
   if (!mime) return '.webm';
   if (mime.includes('mp4'))  return '.m4a';
   if (mime.includes('ogg'))  return '.ogg';
   if (mime.includes('mpeg')) return '.mp3';
   return '.webm';
+}
+
+// Split reply into sentences for pipelined TTS.
+// Splits on ". ", "! ", "? " only when followed by a non-lowercase letter
+// (avoids splitting "Dr. Smith" or "es. questo").
+function splitSentences(text) {
+  const parts = text.match(/[^!?.]+[!?.](?=\s+[^a-z\s]|\s*$)|[^!?.]+$/g);
+  return (parts || [text]).map(s => s.trim()).filter(s => s.length > 2);
+}
+
+// Fetch TTS audio for one piece of text and decode it.
+async function fetchAndDecodeTTS(text) {
+  const res  = await fetch(API + '/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  const bytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0)).buffer;
+  return audioCtx.decodeAudioData(bytes);
+}
+
+// Play a pre-decoded AudioBuffer. Returns a promise that resolves when done.
+function playBuffer(decoded) {
+  return new Promise(res => {
+    const src = audioCtx.createBufferSource();
+    src.buffer = decoded;
+    src.connect(audioCtx.destination);
+    currentAudio = src;
+
+    const onTap = () => { ttsInterrupted = true; try { src.stop(); } catch(_) {} };
+    document.getElementById('main-screen').addEventListener('click', onTap, { once: true });
+    src.onended = () => {
+      document.getElementById('main-screen').removeEventListener('click', onTap);
+      currentAudio = null;
+      res();
+    };
+    src.start(0);
+  });
 }
 
 async function handleAudio(blob) {
@@ -205,11 +247,10 @@ async function handleAudio(blob) {
     const chatRes  = await fetch(API + '/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ history: history.slice(-12), session_id: sessionId })
+      body: JSON.stringify({ history: history.slice(-8), session_id: sessionId })
     });
     const chatData = await chatRes.json();
     if (chatData.error) { showError('Chat: ' + chatData.error); return; }
-    // sessionId stays the one generated at session start — never overwrite it
     const reply = chatData.reply;
     if (!reply) return;
     history.push({ role: 'assistant', content: reply });
@@ -221,39 +262,35 @@ async function handleAudio(blob) {
   }
 }
 
+// Pipelined TTS: fetches sentence N+1 while sentence N is playing,
+// so the user hears the first word as soon as sentence 1 is synthesised —
+// not after the entire reply has been processed.
 async function playTTS(text) {
-  setState('speaking', 'hermes');
   try {
-    const ttsRes  = await fetch(API + '/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
-    });
-    const ttsData = await ttsRes.json();
-    if (ttsData.error) { showError(ttsData.error); return; }
+    const sentences = splitSentences(text);
+    if (!sentences.length) return;
 
-    // Decode WAV via AudioContext (already unlocked by user gesture — works on iOS)
-    const bytes  = Uint8Array.from(atob(ttsData.audio), c => c.charCodeAt(0)).buffer;
-    const decoded = await audioCtx.decodeAudioData(bytes);
+    ttsInterrupted = false;
 
-    await new Promise(res => {
-      const src = audioCtx.createBufferSource();
-      src.buffer = decoded;
-      src.connect(audioCtx.destination);
-      src.onended = res;
-      currentAudio = src;
+    // Kick off TTS for the first sentence immediately (we're still in 'thinking' state)
+    let pending = fetchAndDecodeTTS(sentences[0]);
 
-      // Tap to interrupt
-      const onTap = () => { try { src.stop(); } catch(_) {} };
-      document.getElementById('main-screen').addEventListener('click', onTap, { once: true });
-      src.onended = () => {
-        document.getElementById('main-screen').removeEventListener('click', onTap);
-        currentAudio = null;
-        res();
-      };
+    for (let i = 0; i < sentences.length; i++) {
+      if (!isActive || ttsInterrupted) break;
 
-      src.start(0);
-    });
+      const buffer = await pending;
+
+      // Pre-fetch next sentence before we start playing this one —
+      // overlap the network round-trip with playback time.
+      if (i + 1 < sentences.length) {
+        pending = fetchAndDecodeTTS(sentences[i + 1]);
+      }
+
+      // Switch to speaking state right as first audio chunk begins
+      if (i === 0) setState('speaking', 'hermes');
+
+      await playBuffer(buffer);
+    }
   } catch(e) {
     showError('TTS: ' + e.message);
     console.error(e);
