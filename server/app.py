@@ -1,5 +1,5 @@
-import base64, os, json, re, threading, urllib.request, urllib.error
-from flask import Flask, request, jsonify, send_from_directory, Response
+import base64, os, json, re, threading, time, hmac, hashlib, urllib.request, urllib.error
+from flask import Flask, request, jsonify, send_from_directory, Response, abort
 from flask_cors import CORS
 
 # Load .env file if present (requires python-dotenv, optional)
@@ -33,12 +33,43 @@ HERMES_API_KEY = os.environ.get("HERMES_API_KEY", "")
 HERMES_MODEL   = os.environ.get("HERMES_MODEL", "hermes-agent")
 HERMES_MAX_TOKENS = int(os.environ.get("HERMES_MAX_TOKENS", "800"))
 
+# Access control. This server sits behind a public tunnel URL, and the agent it
+# fronts can search the web, read memory and spend API credits — an open URL is
+# an open agent. Fails closed on purpose: an auth control that silently allows
+# everything when misconfigured is worse than none, because it looks protected.
+VOICE_AUTH_TOKEN = os.environ.get("VOICE_AUTH_TOKEN", "")
+_AUTH_COOKIE     = "hv_auth"
+_AUTH_MAX_AGE    = 365 * 24 * 3600      # a phone should not re-authenticate often
+_PUBLIC_PATHS    = {"/health"}
+
+
+def _auth_cookie_value(expires_at):
+    """expiry + HMAC over it. The token itself never travels in the cookie."""
+    raw = str(int(expires_at))
+    sig = hmac.new(VOICE_AUTH_TOKEN.encode(), raw.encode(), hashlib.sha256).hexdigest()
+    return raw + "." + sig
+
+
+def _auth_cookie_ok(value):
+    try:
+        raw, sig = (value or "").split(".", 1)
+        if int(raw) < time.time():
+            return False
+    except (ValueError, AttributeError):
+        return False
+    expected = hmac.new(VOICE_AUTH_TOKEN.encode(), raw.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(sig, expected)
+
+
 # Discord mirroring — optional. Set both vars to enable.
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "")
 DISCORD_TOKEN   = os.environ.get("DISCORD_BOT_TOKEN",   "")
 DISCORD_UA      = "DiscordBot (https://github.com/lorenzotelesco-png/hermes-voice, 1.0)"
 DISCORD_ENABLED = bool(DISCORD_WEBHOOK and DISCORD_TOKEN)
 
+if not VOICE_AUTH_TOKEN:
+    print("WARNING: VOICE_AUTH_TOKEN is not set — every request will be refused with 503.")
+    print("         Generate one with: openssl rand -hex 32")
 if not DASHBOARD_TOKEN:
     print("WARNING: HERMES_DASHBOARD_TOKEN is not set — /transcribe and /tts will 401.")
     print("         Set HERMES_DASHBOARD_SESSION_TOKEN on the dashboard service to a fixed")
@@ -202,6 +233,43 @@ def mirror_to_discord(user_text, hermes_reply, discord_state):
 _discord_states = {}
 
 # ── Routes ────────────────────────────────────────────────────────
+@app.before_request
+def require_auth():
+    """Gate everything but /health.
+
+    Entry is ?k=<token> once; after that a signed cookie carries the session, so
+    the token does not have to live in the home-screen URL. Same-origin fetches
+    send the cookie on their own, so the client needs no changes.
+    """
+    if not VOICE_AUTH_TOKEN:
+        # Fail closed. Serving an open agent because a variable is unset is the
+        # failure mode this control exists to prevent.
+        return jsonify({"error": "VOICE_AUTH_TOKEN is not set on the server"}), 503
+    if request.path in _PUBLIC_PATHS:
+        return None
+    key = request.args.get("k", "")
+    if key and hmac.compare_digest(key, VOICE_AUTH_TOKEN):
+        request.environ["hv_grant_cookie"] = True
+        return None
+    if _auth_cookie_ok(request.cookies.get(_AUTH_COOKIE)):
+        return None
+    # Deliberately terse: an unauthenticated caller learns nothing about what
+    # runs here.
+    return jsonify({"error": "unauthorized"}), 401
+
+
+@app.after_request
+def grant_auth_cookie(resp):
+    if request.environ.pop("hv_grant_cookie", False):
+        resp.set_cookie(
+            _AUTH_COOKIE, _auth_cookie_value(time.time() + _AUTH_MAX_AGE),
+            max_age=_AUTH_MAX_AGE, httponly=True, samesite="Lax",
+            # The tunnel terminates TLS, so the cookie must never travel plain.
+            secure=request.headers.get("X-Forwarded-Proto", "https") == "https",
+        )
+    return resp
+
+
 @app.after_request
 def no_cache_pwa(resp):
     """Never let the PWA shell be cached.

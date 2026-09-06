@@ -324,6 +324,7 @@ To enable Discord integration (auto-thread + voice mirroring):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `VOICE_AUTH_TOKEN` | *(required)* | Access token. The server refuses everything with 503 until it is set |
 | `HERMES_DASHBOARD_URL` | `http://127.0.0.1:9119` | Hermes dashboard, serves STT and TTS |
 | `HERMES_DASHBOARD_TOKEN` | *(required)* | Must equal `HERMES_DASHBOARD_SESSION_TOKEN` on the dashboard |
 | `HERMES_API_URL` | `http://127.0.0.1:8642/v1/chat/completions` | Hermes Agent API endpoint |
@@ -380,6 +381,29 @@ web:
 **SSH unreachable after reboot** — if `ListenAddress` in `/etc/ssh/sshd_config` is set to a Tailscale or VPN IP, SSH will fail at boot before the network is ready. Change it to `0.0.0.0`.
 
 ---
+
+## Access control
+
+The tunnel URL is public, and the agent behind it can search the web, read
+memory and spend API credits — an open URL is an open agent. Every route except
+`/health` requires a token.
+
+```bash
+echo "VOICE_AUTH_TOKEN=$(openssl rand -hex 32)" >> .env
+```
+
+Open the app once as `https://your-url/?k=<token>`. The server replies with an
+HttpOnly, signed cookie valid for a year, so the token does not have to live in
+the home-screen URL — and the cookie carries only an expiry plus its HMAC, never
+the token itself. Same-origin fetches send it automatically, so the PWA needs no
+change.
+
+**It fails closed.** With `VOICE_AUTH_TOKEN` unset the server refuses every
+request rather than serving an open agent: a control that silently allows
+everything when misconfigured is worse than none, because it looks protected.
+
+This is a single shared secret, appropriate for one person's assistant. It is
+not user accounts, and it does not rotate on its own.
 
 ## Security Notes
 

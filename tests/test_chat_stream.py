@@ -2,6 +2,7 @@ import io, os, sys, json, types
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "server"))
 os.environ["HERMES_API_KEY"] = "test-key"
 os.environ["HERMES_DASHBOARD_TOKEN"] = "test-dash"
+os.environ["VOICE_AUTH_TOKEN"] = "test-auth"
 
 import urllib.request
 import app as srv
@@ -32,7 +33,7 @@ def make_stream():
 srv.urllib.request.urlopen = lambda req, timeout=None: FakeUpstream(make_stream())
 
 c = srv.app.test_client()
-r = c.post("/chat", json={"history":[{"role":"user","content":"che tempo fa?"}],
+r = c.post("/chat?k=test-auth", json={"history":[{"role":"user","content":"che tempo fa?"}],
                           "session_id":"t1"})
 print("status:", r.status_code, "| content-type:", r.headers.get("Content-Type"))
 print("X-Accel-Buffering:", r.headers.get("X-Accel-Buffering"))

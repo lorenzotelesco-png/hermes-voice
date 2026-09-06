@@ -1,6 +1,6 @@
 import io, os, sys, json, base64
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "server"))
-os.environ["HERMES_API_KEY"]="k-agent"; os.environ["HERMES_DASHBOARD_TOKEN"]="k-dash"
+os.environ["HERMES_API_KEY"]="k-agent"; os.environ["HERMES_DASHBOARD_TOKEN"]="k-dash"; os.environ["VOICE_AUTH_TOKEN"]="test-auth"
 import urllib.request, urllib.error
 import app as srv
 
@@ -23,7 +23,7 @@ srv.urllib.request.urlopen = fake_urlopen
 c = srv.app.test_client()
 
 # --- /transcribe ---
-r = c.post("/transcribe", data={"audio":(io.BytesIO(b"\x00\x01audio"),"s.webm","audio/webm")},
+r = c.post("/transcribe?k=test-auth", data={"audio":(io.BytesIO(b"\x00\x01audio"),"s.webm","audio/webm")},
            content_type="multipart/form-data")
 print("transcribe:", r.status_code, r.get_json())
 assert r.get_json()["text"]=="ciao hermes"
@@ -31,7 +31,7 @@ assert seen['headers'].get('X-hermes-session-token')=='k-dash', seen['headers']
 print("  header auth dashboard OK")
 
 # --- /tts ---
-r = c.post("/tts", json={"text":"prova"})
+r = c.post("/tts?k=test-auth", json={"text":"prova"})
 j=r.get_json(); print("tts:", r.status_code, {k:(v[:16]+'...' if k=='audio' else v) for k,v in j.items()})
 assert base64.b64decode(j["audio"])==b'RIFFfake' and j["mime"]=="audio/wav"
 print("  base64 estratto dal data_url OK")
@@ -40,7 +40,7 @@ print("  base64 estratto dal data_url OK")
 def fake_401(req, timeout=None):
     raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, io.BytesIO(b'{"detail":"Unauthorized"}'))
 srv.urllib.request.urlopen = fake_401
-r = c.post("/tts", json={"text":"x"})
+r = c.post("/tts?k=test-auth", json={"text":"x"})
 print("tts 401:", r.status_code, "->", r.get_json()["error"][:70]+"...")
 assert r.status_code==502 and "HERMES_DASHBOARD_SESSION_TOKEN" in r.get_json()["error"]
 
@@ -48,7 +48,7 @@ assert r.status_code==502 and "HERMES_DASHBOARD_SESSION_TOKEN" in r.get_json()["
 def fake_down(req, timeout=None):
     raise urllib.error.URLError("Connection refused")
 srv.urllib.request.urlopen = fake_down
-r = c.post("/tts", json={"text":"x"})
+r = c.post("/tts?k=test-auth", json={"text":"x"})
 print("tts down:", r.status_code, "->", r.get_json()["error"][:60]+"...")
 assert r.status_code==503
 print()
