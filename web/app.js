@@ -137,15 +137,38 @@ function stopSession() {
 
 function toggleMute() {
   isMuted = !isMuted;
+  // Muting mid-utterance means "I am done, take it now". No VAD heuristic is
+  // right every time, so there has to be a way to end a turn on purpose —
+  // especially for a long pause the detector would otherwise cut into.
+  if (isMuted && isSpeaking) {
+    clearTimeout(silenceTimer);
+    endSpeech();
+  }
   stream.getAudioTracks().forEach(t => t.enabled = !isMuted);
   document.getElementById('btn-mute').style.opacity = isMuted ? '0.35' : '1';
 }
 
 // ── VAD ───────────────────────────────────────────────────────────
-// Endpointing: how long a pause must last before we treat the turn as over.
-// This is dead time on every single turn, paid before any work starts, so it is
-// the cheapest latency to buy back. 600ms still tolerates normal speech pauses.
-const SILENCE_MS = Number(new URLSearchParams(location.search).get('silence')) || 600;
+const qs = (k, d) => Number(new URLSearchParams(location.search).get(k)) || d;
+
+// Endpointing: how long a pause must last before the turn is considered over.
+// Dead time paid on every turn, so it is tempting to shrink — but cutting the
+// speaker off mid-sentence costs a whole retry, which is far worse than 300ms.
+const SILENCE_MS = qs('silence', 900);
+
+// Two thresholds, not one. Entering speech has to clear a high bar so room
+// noise cannot open a turn; STAYING in speech only has to clear a low one,
+// because natural speech constantly dips — between words, on unvoiced
+// consonants, in mid-sentence pauses for thought. With a single bar every one
+// of those dips looks like the end of the turn.
+const START_MULT    = qs('start', 2.8);
+const CONTINUE_MULT = qs('cont', 1.35);
+
+// A burst shorter than this is a cough, a door, a keyboard — not a turn.
+// Transcribing it wastes a round trip and confuses the conversation.
+const MIN_UTTERANCE_MS = qs('minms', 500);
+
+let speechStartedAt = 0;
 
 // Barge-in: the mic stays live while Hermes speaks so it can be interrupted.
 // The bar is higher than for normal listening because the mic still picks up
@@ -164,7 +187,7 @@ function getRMS() {
 }
 
 function startRecording() {
-  isSpeaking = true; chunks = [];
+  isSpeaking = true; chunks = []; speechStartedAt = performance.now();
   recorder = new MediaRecorder(stream, { mimeType: getAudioMime() });
   recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
   recorder.start(100);
@@ -183,11 +206,16 @@ function monitorLoop() {
   const rms = getRMS();
   volume = volume * 0.75 + (rms / (noiseFloor * 8)) * 0.25;
 
-  const speaking  = blobState === 'speaking';
-  const threshold = noiseFloor * (speaking ? BARGE_IN_MULT : 2.8);
-  const gateOpen  = speaking
+  const speaking = blobState === 'speaking';
+  const gateOpen = speaking
     ? (performance.now() - playbackStartedAt) > BARGE_IN_GRACE_MS
     : !isProcessing;
+
+  // Already recording? Then the only job is to notice we are still talking, and
+  // a much lower bar is enough for that.
+  const threshold = noiseFloor * (isSpeaking ? CONTINUE_MULT
+                                : speaking   ? BARGE_IN_MULT
+                                             : START_MULT);
 
   if (!isMuted && gateOpen && rms > threshold) {
     if (speaking) interruptPlayback();
@@ -205,6 +233,19 @@ function getAudioMime() {
 
 function endSpeech() {
   if (!isSpeaking || isProcessing) return;
+
+  // Too short to be a turn: throw it away and keep listening rather than paying
+  // a transcription round trip for a cough.
+  if (performance.now() - speechStartedAt < MIN_UTTERANCE_MS) {
+    isSpeaking = false;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.onstop = () => { chunks = []; };
+      recorder.stop();
+    }
+    if (isActive) setState('listening', 'in ascolto');
+    return;
+  }
+
   isSpeaking = false; isProcessing = true;
   setState('thinking', 'elaboro...');
   recorder.onstop = async () => {

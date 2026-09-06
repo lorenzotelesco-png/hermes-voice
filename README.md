@@ -62,11 +62,25 @@ bound to loopback, so nothing but this server can reach it.
 
 **Client tuning** (top of `web/app.js`):
 
-| Constant | Default | What it does |
-|----------|---------|--------------|
-| `SILENCE_MS` | 600 | Pause before a turn is considered over. Override live with `?silence=N` |
-| `BARGE_IN_MULT` | 4.0 | Speech trigger during playback, as a multiple of the calibrated noise floor. Lower = easier to interrupt, more likely to self-trigger |
-| `BARGE_IN_GRACE_MS` | 500 | Dead period after audio starts, so the reply cannot interrupt itself |
+All tunable live from the phone via query string, no redeploy — e.g.
+`?silence=1200&cont=1.2`.
+
+| Constant | Query | Default | What it does |
+|----------|-------|---------|--------------|
+| `SILENCE_MS` | `silence` | 900 | Pause before a turn is considered over |
+| `START_MULT` | `start` | 2.8 | Bar to **open** a turn, as a multiple of the calibrated noise floor |
+| `CONTINUE_MULT` | `cont` | 1.35 | Bar to **stay** in a turn. Must be well below `START_MULT`: speech dips constantly between words, and a single bar reads every dip as the end of the sentence |
+| `MIN_UTTERANCE_MS` | `minms` | 500 | Bursts shorter than this are discarded as noise |
+| `BARGE_IN_MULT` | — | 4.0 | Speech trigger during playback. Lower = easier to interrupt, more likely to self-trigger |
+| `BARGE_IN_GRACE_MS` | — | 500 | Dead period after audio starts, so the reply cannot interrupt itself |
+
+**If it cuts you off mid-sentence:** raise `silence`, then lower `cont`. Cutting
+someone off costs a whole retry, which is far more expensive than the few hundred
+milliseconds a longer pause costs.
+
+**Ending a turn on purpose:** tapping mute while you are talking submits what you
+have said so far. No VAD is right every time — this is the deterministic override
+for a long pause the detector would otherwise cut into.
 
 Barge-in depends on the browser's echo cancellation (requested via
 `getUserMedia`). On a phone at speaker volume without it, the mic hears the reply
