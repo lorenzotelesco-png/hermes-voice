@@ -95,24 +95,35 @@ Browse all available voices at [rhasspy/piper-voices](https://huggingface.co/rha
 
 # Required: enable the API server in ~/.hermes/.env
 echo "API_SERVER_ENABLED=true" >> ~/.hermes/.env
+echo "API_SERVER_KEY=$(openssl rand -base64 32)" >> ~/.hermes/.env
 echo "OPENROUTER_API_KEY=your_openrouter_key_here" >> ~/.hermes/.env
+echo "DEEPINFRA_API_KEY=your_deepinfra_key_here" >> ~/.hermes/.env
 ```
 
 Configure `~/.hermes/config.yaml` — key settings:
 
 ```yaml
 model:
-  default: inclusionai/ling-2.6-1t:free   # or any OpenRouter model
+  default: deepseek/deepseek-v4-flash-0731
   provider: openrouter
   base_url: https://openrouter.ai/api/v1
   api_mode: chat_completions
 
-# Fallback: local Ollama when cloud model is rate-limited or unavailable
-fallback_model:
-  provider: openrouter
-  model: qwen2.5:3b
-  base_url: http://127.0.0.1:11434/v1
-  api_key: ollama
+agent:
+  # This model ships with reasoning ON at effort "high". For voice that is the
+  # single worst latency cost: every turn burns thinking tokens before the first
+  # spoken word. "low" is the lowest level this route accepts (max|high|low);
+  # Hermes clamps downward to the nearest supported level.
+  reasoning_effort: low
+
+stt:
+  provider: deepinfra          # whisper-large-v3-turbo, ~$0.0002/min
+  language: it                 # pinned: kills auto-detect latency and misdetection
+
+tts:
+  provider: piper              # local, no network hop — fastest time-to-first-word
+  piper:
+    voice: it_IT-paola-medium
 
 discord:
   require_mention: false
@@ -248,6 +259,9 @@ To enable Discord integration (auto-thread + voice mirroring):
 | `PIPER_MODEL_PATH` | `models/it_IT/it_IT-paola-medium.onnx` | Piper ONNX model path |
 | `PIPER_MODEL_CONFIG` | `models/it_IT/it_IT-paola-medium.onnx.json` | Piper model config path |
 | `HERMES_API_URL` | `http://127.0.0.1:8642/v1/chat/completions` | Hermes Agent API endpoint |
+| `HERMES_API_KEY` | *(required)* | Bearer token — must equal `API_SERVER_KEY` in `~/.hermes/.env` |
+| `HERMES_MODEL` | `hermes-agent` | Model name advertised by Hermes on `/v1/models` |
+| `HERMES_MAX_TOKENS` | `800` | Max tokens per reply |
 | `STT_LANGUAGE` | `it` | Whisper transcription language (BCP-47) |
 | `DISCORD_WEBHOOK_URL` | *(disabled)* | Webhook URL for voice session mirroring |
 | `DISCORD_BOT_TOKEN` | *(disabled)* | Bot token for Discord thread creation |
@@ -259,6 +273,8 @@ To enable Discord integration (auto-thread + voice mirroring):
 |----------|-------------|
 | `OPENROUTER_API_KEY` | OpenRouter API key (get one at openrouter.ai) |
 | `API_SERVER_ENABLED` | Must be `true` to expose the local API on port 8642 |
+| `API_SERVER_KEY` | **Required.** Bearer token for the API server — Hermes rejects every request without it, loopback included. Mirror it into this repo's `.env` as `HERMES_API_KEY` |
+| `DEEPINFRA_API_KEY` | DeepInfra key — used for STT (`stt.provider: deepinfra`) |
 | `DISCORD_BOT_TOKEN` | Same bot token as above |
 
 ---

@@ -130,7 +130,10 @@ function toggleMute() {
 }
 
 // ── VAD ───────────────────────────────────────────────────────────
-const SILENCE_MS = 1000;
+// Endpointing: how long a pause must last before we treat the turn as over.
+// This is dead time on every single turn, paid before any work starts, so it is
+// the cheapest latency to buy back. 600ms still tolerates normal speech pauses.
+const SILENCE_MS = Number(new URLSearchParams(location.search).get('silence')) || 600;
 
 function getRMS() {
   const d = new Uint8Array(analyser.frequencyBinCount);

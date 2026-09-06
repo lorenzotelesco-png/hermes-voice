@@ -7,8 +7,7 @@ Type=simple
 User=root
 WorkingDirectory=/root/.hermes/hermes-agent
 EnvironmentFile=-/root/.hermes/.env
-Environment=OPENROUTER_API_KEY=your_openrouter_key_here
-ExecStart=/root/.hermes/hermes-agent/venv/bin/python cli.py --gateway --replace
+ExecStart=/root/.hermes/hermes-agent/.venv/bin/hermes gateway
 Restart=always
 RestartSec=5
 StartLimitBurst=5

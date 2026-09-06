@@ -19,6 +19,15 @@ MODEL_CONFIG = os.environ.get("PIPER_MODEL_CONFIG",  "models/it_IT/it_IT-paola-m
 HERMES_API   = os.environ.get("HERMES_API_URL",      "http://127.0.0.1:8642/v1/chat/completions")
 STT_LANGUAGE = os.environ.get("STT_LANGUAGE",        "it")
 
+# Hermes Agent API auth. Since 2026 the API server requires a bearer token on
+# EVERY deployment, including the default loopback bind on 127.0.0.1 — requests
+# without it are rejected with 401. Must match API_SERVER_KEY in ~/.hermes/.env.
+HERMES_API_KEY = os.environ.get("HERMES_API_KEY", "")
+# Advertised model name on /v1/models. Defaults to the profile name, or
+# "hermes-agent" for the default profile. Override with API_SERVER_MODEL_NAME.
+HERMES_MODEL   = os.environ.get("HERMES_MODEL", "hermes-agent")
+HERMES_MAX_TOKENS = int(os.environ.get("HERMES_MAX_TOKENS", "800"))
+
 # Discord mirroring — optional. Set both vars to enable.
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "")
 DISCORD_TOKEN   = os.environ.get("DISCORD_BOT_TOKEN",   "")
@@ -35,6 +44,9 @@ MIME_EXT = {
 print("Loading Whisper model...")
 whisper = WhisperModel("small", device="cpu", compute_type="int8")
 print("Whisper ready.")
+if not HERMES_API_KEY:
+    print("WARNING: HERMES_API_KEY is not set — Hermes Agent will reject /chat with 401.")
+    print("         Set API_SERVER_KEY in ~/.hermes/.env and mirror it here as HERMES_API_KEY.")
 if DISCORD_ENABLED:
     print("Discord mirroring: enabled")
 else:
@@ -166,12 +178,21 @@ def chat():
         # Context is carried by the messages array; Hermes handles fallback to
         # Ollama locally when the cloud model is rate-limited or unavailable.
         payload = json.dumps({
-            "model": "hermes",
+            "model": HERMES_MODEL,
             "messages": messages,
-            "max_tokens": 300,
+            "max_tokens": HERMES_MAX_TOKENS,
         }).encode()
-        req = urllib.request.Request(HERMES_API, data=payload,
-                                     headers={"Content-Type": "application/json"})
+        headers = {"Content-Type": "application/json"}
+        if HERMES_API_KEY:
+            headers["Authorization"] = f"Bearer {HERMES_API_KEY}"
+        if session_id:
+            # Transcript scope: keeps this voice session as one conversation in
+            # the dashboard and session history instead of N orphaned turns.
+            headers["X-Hermes-Session-Id"] = session_id
+            # Stable long-term memory scope — deliberately NOT the session id,
+            # which rotates per voice session.
+            headers["X-Hermes-Session-Key"] = "hermes-voice:pwa"
+        req = urllib.request.Request(HERMES_API, data=payload, headers=headers)
         with urllib.request.urlopen(req, timeout=60) as r:
             result = json.loads(r.read())
 
@@ -189,6 +210,13 @@ def chat():
 
         return jsonify({"reply": reply, "session_id": session_id})
 
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")[:300]
+        print(f"[CHAT ERROR] HTTP {e.code}: {body}")
+        if e.code in (401, 403):
+            return jsonify({"error": f"Hermes rejected the request ({e.code}). "
+                                     f"Check HERMES_API_KEY matches API_SERVER_KEY."}), 502
+        return jsonify({"error": f"Hermes HTTP {e.code}: {body}"}), 502
     except Exception as e:
         print(f"[CHAT ERROR] {e}")
         return jsonify({"error": str(e)}), 500
