@@ -382,6 +382,32 @@ web:
 
 ---
 
+## Scoping the voice channel's tools
+
+The API server should not carry the CLI's toolset. Give it its own in
+`~/.hermes/config.yaml` — CLI and Discord keep theirs:
+
+```yaml
+platform_toolsets:
+  api_server:
+    - web            # web_search stays: it must still fire on its own
+    - memory
+    - session_search
+    - skills
+    - cronjob
+```
+
+**Do this for access, not for speed.** It removes `terminal`, `process`,
+`read_file`, `write_file`, `patch`, `search_files` and every `browser_*` tool
+from a channel reachable over the public tunnel, which is the whole point.
+
+The prompt does shrink — 12858 tokens to 8168, about 36% — and that buys
+**nothing measurable**. Timed with alternating A/B blocks, 12 samples each:
+median 1288ms reduced vs 1159ms full, against a standard deviation of 712ms.
+Two blocks of the *same* configuration differed by 383ms, so within-arm drift
+dwarfs the difference. Prefill is essentially free on this path; the latency
+lives elsewhere.
+
 ## Access control
 
 The tunnel URL is public, and the agent behind it can search the web, read
