@@ -109,8 +109,17 @@ def take_sentence(buf):
     return None, buf
 
 
+# ngrok's free tier will not reliably flush a small chunk: the same payload
+# streams correctly one run and arrives as one 42ms burst the next, which is
+# heard as "it generated everything, then started talking". Proxies flush once a
+# chunk crosses their buffer threshold, so every event is padded past it with an
+# SSE comment (a line starting with ":" is ignored by every SSE parser).
+# Wasteful, but 2KB against a sentence of speech is not a real cost.
+_FLUSH_PAD = ": " + (" " * 2048) + "\n"
+
+
 def sse(payload):
-    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+    return _FLUSH_PAD + "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
 
 
 def clean_for_tts(text):
