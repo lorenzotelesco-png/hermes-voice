@@ -15,6 +15,21 @@ for path in ["/", "/app.js", "/chat", "/tts", "/transcribe", "/voice-config"]:
     assert r.status_code == 401, f"{path} doveva dare 401, ha dato {r.status_code}"
 print("senza token: 401 su /, /app.js, /chat, /tts, /transcribe, /voice-config  OK")
 
+# un browser che apre la pagina deve ricevere un modo per rientrare,
+# non JSON grezzo: senza, un telefono bloccato fuori resta senza indicazioni
+r = c.get("/", headers={"Accept": "text/html,application/xhtml+xml"})
+assert r.status_code == 401
+assert "text/html" in r.headers["Content-Type"], r.headers["Content-Type"]
+body = r.get_data(as_text=True)
+assert "<form" in body and "type=password" in body, body[:200]
+assert TOK not in body, "la pagina non deve contenere il token"
+print("401 su navigazione: pagina di accesso, senza segreti dentro  OK")
+
+# le chiamate API restano JSON: un client non deve ricevere HTML
+r = c.post("/tts", json={}, headers={"Accept": "application/json"})
+assert r.status_code == 401 and r.get_json()["error"] == "unauthorized"
+print("401 su API: JSON  OK")
+
 # /health resta pubblico per il monitoraggio
 assert c.get("/health").status_code == 200
 print("/health pubblico  OK")

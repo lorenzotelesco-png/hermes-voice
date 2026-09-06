@@ -61,6 +61,31 @@ def _auth_cookie_ok(value):
     return hmac.compare_digest(sig, expected)
 
 
+# Deliberately says nothing about what runs here: an unauthenticated visitor
+# learns only that a token is needed. Submitting reloads with ?k=, which the gate
+# above exchanges for the cookie.
+_LOGIN_PAGE = """<!doctype html><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Hermes Voice</title>
+<style>
+ body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
+      background:#0a0a0a;color:#e8e0d0;font:16px -apple-system,system-ui,sans-serif}
+ form{display:flex;flex-direction:column;gap:14px;width:min(320px,80vw)}
+ h1{font:300 15px/1 -apple-system,system-ui;letter-spacing:.3em;text-align:center;
+    opacity:.55;margin:0 0 6px;text-transform:uppercase}
+ input{padding:13px;border-radius:10px;border:1px solid #2e2e2e;background:#151515;
+       color:#e8e0d0;font-size:16px}
+ button{padding:13px;border-radius:10px;border:0;background:#e8e0d0;color:#0a0a0a;
+        font-size:16px;font-weight:600}
+</style>
+<form onsubmit="location.search='?k='+encodeURIComponent(t.value);return false">
+  <h1>Hermes</h1>
+  <input id=t type=password placeholder="token di accesso"
+         autocomplete="current-password" autofocus>
+  <button>Entra</button>
+</form>"""
+
+
 # Discord mirroring — optional. Set both vars to enable.
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "")
 DISCORD_TOKEN   = os.environ.get("DISCORD_BOT_TOKEN",   "")
@@ -267,8 +292,11 @@ def require_auth():
         return None
     if _auth_cookie_ok(request.cookies.get(_AUTH_COOKIE)):
         return None
-    # Deliberately terse: an unauthenticated caller learns nothing about what
-    # runs here.
+    # A browser opening the page gets a way back in; anything else gets a bare
+    # 401. Without this a locked-out phone just renders raw JSON, with no hint
+    # that a token exists or where to put it.
+    if "text/html" in request.headers.get("Accept", ""):
+        return Response(_LOGIN_PAGE, status=401, mimetype="text/html")
     return jsonify({"error": "unauthorized"}), 401
 
 

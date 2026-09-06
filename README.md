@@ -444,7 +444,15 @@ memory and spend API credits — an open URL is an open agent. Every route excep
 echo "VOICE_AUTH_TOKEN=$(openssl rand -hex 32)" >> .env
 ```
 
-Open the app once as `https://your-url/?k=<token>`. The server replies with an
+Open the app once as `https://your-url/?k=<token>`, or just open it and paste the
+token into the login page — a browser hitting a gated route gets a form back, not
+raw JSON, so a locked-out phone has a way in. API calls still get a bare 401.
+
+**On iOS, add the app to the home screen from the `?k=` URL.** A standalone web
+app has its own cookie jar, so authenticating in Safari does not necessarily
+authenticate the home-screen icon.
+
+The server replies with an
 HttpOnly, signed cookie valid for a year, so the token does not have to live in
 the home-screen URL — and the cookie carries only an expiry plus its HMAC, never
 the token itself. Same-origin fetches send it automatically, so the PWA needs no
