@@ -1,0 +1,22 @@
+[Unit]
+Description=Hermes Dashboard (audio API on port 9119)
+After=network.target hermes-agent.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/.hermes/hermes-agent
+EnvironmentFile=-/root/.hermes/.env
+# HERMES_DASHBOARD_SESSION_TOKEN must be set in ~/.hermes/.env to a fixed value.
+# Without it the dashboard mints a random token on every start and hermes-voice
+# gets 401 on /transcribe and /tts after each restart.
+# Bound to loopback on purpose: hermes-voice is the only client, and a public
+# bind would require configuring an auth provider.
+ExecStart=/root/.hermes/hermes-agent/.venv/bin/hermes dashboard     --host 127.0.0.1 --port 9119 --no-open
+Restart=always
+RestartSec=5
+StartLimitBurst=5
+SyslogIdentifier=hermes-dashboard
+
+[Install]
+WantedBy=multi-user.target

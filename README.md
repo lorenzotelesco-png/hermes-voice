@@ -13,8 +13,9 @@ Works as a PWA from iPhone Safari over HTTPS.
 ## Features
 
 - **Always-listening VAD** — adaptive noise floor calibration, no push-to-talk
-- **Server-side STT** — faster-whisper (small model, int8, CPU-friendly)
-- **Local TTS** — Piper (fully offline, low-latency, Italian voice included)
+- **Speech I/O delegated to Hermes** — STT and TTS run on the Hermes dashboard, so
+  providers, models and voices are configured once in `config.yaml` and shared with
+  every other Hermes surface. This server holds no speech stack of its own.
 - **Pipelined TTS** — sentence N+1 is fetched while N is playing; first audio in ~1 s
 - **iOS Safari compatible** — AudioContext unlock, correct `audio/mp4` MIME handling
 - **Discord mirroring** — each voice session creates a Discord thread with full transcript
@@ -30,20 +31,27 @@ Works as a PWA from iPhone Safari over HTTPS.
 iPhone (Safari PWA)
   │  HTTPS (ngrok tunnel)
   ▼
-Flask server — port 5000
-  ├── POST /transcribe ──► faster-whisper ──► text
-  ├── POST /chat       ──► Hermes Agent (port 8642) ──► reply
+Flask server — port 5000          (thin proxy + static PWA, no speech stack)
+  ├── POST /transcribe ──► Hermes dashboard :9119 /api/audio/transcribe ──► text
+  ├── POST /chat       ──► Hermes Agent     :8642 /v1/chat/completions  ──► reply
   │                              │
-  │                        OpenRouter API (cloud)
-  │                        └── fallback: Ollama local (qwen2.5:3b)
+  │                        OpenRouter (deepseek-v4-flash-0731)
   │                              │
   │                         (async) Discord thread mirror
-  └── POST /tts        ──► Piper binary ──► WAV base64
+  └── POST /tts        ──► Hermes dashboard :9119 /api/audio/speak      ──► audio
 ```
 
-**LLM fallback chain** — Hermes Agent tries models in order:
-1. Primary cloud model via OpenRouter (e.g. `inclusionai/ling-2.6-1t:free`)
-2. Local Ollama model (`qwen2.5:3b`) — kicks in automatically on rate limits or API errors
+Both dashboard calls authenticate with `X-Hermes-Session-Token`; the dashboard is
+bound to loopback, so nothing but this server can reach it.
+
+**Where things are configured** — this server decides almost nothing:
+
+| Concern | Configured in |
+|---------|---------------|
+| LLM, reasoning effort | `~/.hermes/config.yaml` → `model`, `agent.reasoning_effort` |
+| STT provider, language | `~/.hermes/config.yaml` → `stt` |
+| TTS provider, voice | `~/.hermes/config.yaml` → `tts` |
+| Endpointing, VAD | `web/app.js` (client-side) |
 
 ---
 
@@ -51,13 +59,15 @@ Flask server — port 5000
 
 | Resource | Minimum | Recommended |
 |----------|---------|-------------|
-| CPU | 2 cores | 3+ cores (modern x86) |
-| RAM | 4 GB | 6 GB |
-| Disk | 10 GB | 30 GB |
+| CPU | 1 core | 2+ cores |
+| RAM | 2 GB | 4 GB |
+| Disk | 5 GB | 20 GB |
 | GPU | not required | not required |
 | OS | Ubuntu 22.04+ | Ubuntu 22.04+ |
 
-> The stack runs fine on a low-cost VPS (tested on AMD Ryzen 9 7950X3D, 3 vCPU, 6 GB RAM).
+> Requirements dropped once STT and TTS moved to the Hermes dashboard: this server no
+> longer keeps a Whisper model resident (~1 GB) or shells out to Piper. Sizing is now
+> driven by Hermes itself, not by this process.
 
 ---
 
@@ -71,21 +81,25 @@ cd hermes-voice
 pip install -r requirements.txt
 ```
 
-### 2. Install Piper TTS
+### 2. Enable the Hermes dashboard (speech in/out)
+
+STT and TTS are served by the dashboard, which needs the `web` extra:
 
 ```bash
-# Download Piper binary (Linux x86_64)
-curl -L https://github.com/rhasspy/piper/releases/latest/download/piper_linux_x86_64.tar.gz | tar xz
-sudo mv piper/piper /usr/local/bin/
-
-# Download an Italian voice model
-mkdir -p models/it_IT && cd models/it_IT
-wget https://huggingface.co/rhasspy/piper-voices/resolve/main/it/it_IT/paola/medium/it_IT-paola-medium.onnx
-wget https://huggingface.co/rhasspy/piper-voices/resolve/main/it/it_IT/paola/medium/it_IT-paola-medium.onnx.json
-cd ../..
+cd ~/.hermes/hermes-agent && uv pip install -e ".[web]"
 ```
 
-Browse all available voices at [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices).
+Pick a **fixed** session token — without it the dashboard mints a random one at
+every start and this server gets 401 after each restart:
+
+```bash
+echo "HERMES_DASHBOARD_SESSION_TOKEN=$(openssl rand -base64 32)" >> ~/.hermes/.env
+```
+
+Piper needs no manual download any more: Hermes installs it via `hermes tools` →
+Voice & TTS → Piper (or `pip install piper-tts`) and fetches the voice model on
+first use into `~/.hermes/cache/piper-voices/`. Browse voices at
+[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) — 44 languages.
 
 ### 3. Install and configure Hermes Agent
 
@@ -140,16 +154,7 @@ session_reset:
   at_hour: 4
 ```
 
-### 4. Install Ollama and pull the fallback model
-
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2.5:3b    # ~1.9 GB — fits in 4 GB RAM
-```
-
-Ollama runs as a system service automatically after install.
-
-### 5. Configure the voice server
+### 4. Configure the voice server
 
 ```bash
 cp .env.example .env
@@ -159,10 +164,13 @@ nano .env
 Minimum required:
 
 ```env
-PIPER_MODEL_PATH=models/it_IT/it_IT-paola-medium.onnx
-PIPER_MODEL_CONFIG=models/it_IT/it_IT-paola-medium.onnx.json
-STT_LANGUAGE=it
+HERMES_API_KEY=<same value as API_SERVER_KEY in ~/.hermes/.env>
+HERMES_DASHBOARD_TOKEN=<same value as HERMES_DASHBOARD_SESSION_TOKEN>
 ```
+
+Both must match their counterparts on the Hermes side exactly, or the server
+answers 401. Speech settings (provider, voice, language) are **not** here — they
+live in `~/.hermes/config.yaml`.
 
 Optional Discord mirroring:
 
@@ -171,11 +179,12 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN
 DISCORD_BOT_TOKEN=your_bot_token_here
 ```
 
-### 6. Set up systemd services (auto-restart on reboot)
+### 5. Set up systemd services (auto-restart on reboot)
 
 ```bash
 # Copy service files
 cp deploy/hermes-agent.service /etc/systemd/system/
+cp deploy/hermes-dashboard.service /etc/systemd/system/
 cp deploy/hermes-voice.service /etc/systemd/system/
 cp deploy/ngrok-tunnel.service /etc/systemd/system/   # optional
 
@@ -185,6 +194,7 @@ nano /etc/systemd/system/hermes-agent.service
 # Enable and start
 systemctl daemon-reload
 systemctl enable --now hermes-agent
+systemctl enable --now hermes-dashboard
 systemctl enable --now hermes-voice
 systemctl enable --now ngrok-tunnel   # optional
 ```
@@ -197,7 +207,7 @@ systemctl status hermes-voice
 journalctl -u hermes-voice -f
 ```
 
-### 7. Expose over HTTPS (required for microphone on mobile)
+### 6. Expose over HTTPS (required for microphone on mobile)
 
 **Option A — ngrok free tier (fixed permanent URL):**
 
@@ -222,7 +232,7 @@ cloudflared tunnel --url http://127.0.0.1:5000
 
 **Option C — reverse proxy (Caddy / nginx) with your own domain.**
 
-### 8. Install as iOS PWA
+### 7. Install as iOS PWA
 
 1. Open the HTTPS URL in Safari on your iPhone
 2. Tap the Share button → **Add to Home Screen**
@@ -256,13 +266,12 @@ To enable Discord integration (auto-thread + voice mirroring):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PIPER_MODEL_PATH` | `models/it_IT/it_IT-paola-medium.onnx` | Piper ONNX model path |
-| `PIPER_MODEL_CONFIG` | `models/it_IT/it_IT-paola-medium.onnx.json` | Piper model config path |
+| `HERMES_DASHBOARD_URL` | `http://127.0.0.1:9119` | Hermes dashboard, serves STT and TTS |
+| `HERMES_DASHBOARD_TOKEN` | *(required)* | Must equal `HERMES_DASHBOARD_SESSION_TOKEN` on the dashboard |
 | `HERMES_API_URL` | `http://127.0.0.1:8642/v1/chat/completions` | Hermes Agent API endpoint |
 | `HERMES_API_KEY` | *(required)* | Bearer token — must equal `API_SERVER_KEY` in `~/.hermes/.env` |
 | `HERMES_MODEL` | `hermes-agent` | Model name advertised by Hermes on `/v1/models` |
 | `HERMES_MAX_TOKENS` | `800` | Max tokens per reply |
-| `STT_LANGUAGE` | `it` | Whisper transcription language (BCP-47) |
 | `DISCORD_WEBHOOK_URL` | *(disabled)* | Webhook URL for voice session mirroring |
 | `DISCORD_BOT_TOKEN` | *(disabled)* | Bot token for Discord thread creation |
 | `PORT` | `5000` | Flask server port |
@@ -283,7 +292,15 @@ To enable Discord integration (auto-thread + voice mirroring):
 
 **Microphone not working on iOS** — the app requires HTTPS. `http://` will silently fail. Use ngrok or Cloudflare Tunnel.
 
-**Hermes returns errors** — check `journalctl -u hermes-agent -n 50`. If rate-limited, the Ollama fallback kicks in automatically. If Ollama isn't installed, install it with `curl -fsSL https://ollama.com/install.sh | sh && ollama pull qwen2.5:3b`.
+**Hermes returns errors** — check `journalctl -u hermes-agent -n 50`.
+
+**`/chat` returns 401/403** — `HERMES_API_KEY` in this repo's `.env` must equal `API_SERVER_KEY` in `~/.hermes/.env`. Hermes requires this token on every deployment, loopback included.
+
+**`/transcribe` or `/tts` returns 401** — `HERMES_DASHBOARD_TOKEN` must equal `HERMES_DASHBOARD_SESSION_TOKEN` in the dashboard's environment. If that variable was never set, the dashboard picked a random token at boot: set it in `~/.hermes/.env`, then `systemctl restart hermes-dashboard`.
+
+**`/transcribe` or `/tts` returns 503** — the dashboard is not running. `systemctl status hermes-dashboard`, and check the `web` extra is installed.
+
+**No audio comes back** — the TTS provider is failing on the Hermes side, not here. Check `tts.provider` in `~/.hermes/config.yaml` and `journalctl -u hermes-dashboard -n 50`.
 
 **No Discord threads** — make sure `free_response_channels` is **empty** and the channel ID is in `allowed_channels` instead. Channels listed in `free_response_channels` disable auto-threading by design (Hermes source behavior).
 

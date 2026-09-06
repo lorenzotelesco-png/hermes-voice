@@ -1,7 +1,6 @@
-import subprocess, base64, tempfile, os, json, re, threading, urllib.request, urllib.error
+import base64, os, json, re, threading, urllib.request, urllib.error
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from faster_whisper import WhisperModel
 
 # Load .env file if present (requires python-dotenv, optional)
 try:
@@ -14,10 +13,16 @@ app = Flask(__name__, static_folder="../web", static_url_path="")
 CORS(app)
 
 # ── Config (all values from environment variables) ────────────────
-MODEL_PATH   = os.environ.get("PIPER_MODEL_PATH",   "models/it_IT/it_IT-paola-medium.onnx")
-MODEL_CONFIG = os.environ.get("PIPER_MODEL_CONFIG",  "models/it_IT/it_IT-paola-medium.onnx.json")
 HERMES_API   = os.environ.get("HERMES_API_URL",      "http://127.0.0.1:8642/v1/chat/completions")
-STT_LANGUAGE = os.environ.get("STT_LANGUAGE",        "it")
+
+# Speech I/O runs on the Hermes dashboard, not here. STT and TTS providers,
+# models and language all come from ~/.hermes/config.yaml (stt.*, tts.*) — this
+# server only forwards audio. That is why there is no Whisper model to load and
+# no Piper binary to shell out to any more.
+DASHBOARD_URL   = os.environ.get("HERMES_DASHBOARD_URL", "http://127.0.0.1:9119")
+# Must equal HERMES_DASHBOARD_SESSION_TOKEN in the dashboard's environment.
+# Left unset, the dashboard mints a random token per start and every call 401s.
+DASHBOARD_TOKEN = os.environ.get("HERMES_DASHBOARD_TOKEN", "")
 
 # Hermes Agent API auth. Since 2026 the API server requires a bearer token on
 # EVERY deployment, including the default loopback bind on 127.0.0.1 — requests
@@ -34,16 +39,10 @@ DISCORD_TOKEN   = os.environ.get("DISCORD_BOT_TOKEN",   "")
 DISCORD_UA      = "DiscordBot (https://github.com/lorenzotelesco-png/hermes-voice, 1.0)"
 DISCORD_ENABLED = bool(DISCORD_WEBHOOK and DISCORD_TOKEN)
 
-MIME_EXT = {
-    "audio/webm": ".webm", "audio/webm;codecs=opus": ".webm",
-    "audio/ogg": ".ogg",   "audio/ogg;codecs=opus": ".ogg",
-    "audio/mp4": ".m4a",   "audio/mpeg": ".mp3",
-    "audio/wav": ".wav",   "audio/x-wav": ".wav",
-}
-
-print("Loading Whisper model...")
-whisper = WhisperModel("small", device="cpu", compute_type="int8")
-print("Whisper ready.")
+if not DASHBOARD_TOKEN:
+    print("WARNING: HERMES_DASHBOARD_TOKEN is not set — /transcribe and /tts will 401.")
+    print("         Set HERMES_DASHBOARD_SESSION_TOKEN on the dashboard service to a fixed")
+    print("         value and mirror it here, otherwise the token is random per restart.")
 if not HERMES_API_KEY:
     print("WARNING: HERMES_API_KEY is not set — Hermes Agent will reject /chat with 401.")
     print("         Set API_SERVER_KEY in ~/.hermes/.env and mirror it here as HERMES_API_KEY.")
@@ -53,6 +52,44 @@ else:
     print("Discord mirroring: disabled (set DISCORD_WEBHOOK_URL + DISCORD_BOT_TOKEN to enable)")
 
 # ── Helpers ───────────────────────────────────────────────────────
+class DashboardError(Exception):
+    """A call to the Hermes dashboard audio API failed."""
+    def __init__(self, message, status=502):
+        super().__init__(message)
+        self.status = status
+
+
+def dashboard_post(path, payload, timeout=60):
+    """POST JSON to the Hermes dashboard and return the decoded response.
+
+    Auth uses the dedicated session header rather than Authorization: the
+    dashboard prefers it precisely because Authorization collides with reverse
+    proxies that do their own basic auth.
+    """
+    req = urllib.request.Request(
+        f"{DASHBOARD_URL}{path}",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "X-Hermes-Session-Token": DASHBOARD_TOKEN,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")[:300]
+        if e.code == 401:
+            raise DashboardError(
+                "Dashboard rejected the session token. HERMES_DASHBOARD_TOKEN must match "
+                "HERMES_DASHBOARD_SESSION_TOKEN on the dashboard service.")
+        raise DashboardError(f"Dashboard HTTP {e.code}: {body}")
+    except urllib.error.URLError as e:
+        raise DashboardError(
+            f"Dashboard unreachable at {DASHBOARD_URL} ({e.reason}). "
+            f"Is `hermes dashboard` running?", status=503)
+
+
 def clean_for_tts(text):
     text = re.sub(r'<@!?\d+>', '', text)
     text = re.sub(r'<#\d+>', '', text)
@@ -132,24 +169,37 @@ def index():
 def health():
     return jsonify({"status": "ok"})
 
+# The dashboard rejects uploads above this; we check first so an oversized clip
+# fails here with a clear message instead of as an opaque 413 from the proxy.
+MAX_AUDIO_BYTES = 25 * 1024 * 1024
+
+
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
     if "audio" not in request.files:
         return jsonify({"error": "no audio file"}), 400
-    f    = request.files["audio"]
-    mime = f.content_type or "audio/webm"
-    ext  = MIME_EXT.get(mime.split(";")[0].strip(), ".webm")
-    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-        f.save(tmp.name); path = tmp.name
+    f     = request.files["audio"]
+    mime  = (f.content_type or "audio/webm").split(";")[0].strip()
+    audio = f.read()
+    if not audio:
+        return jsonify({"error": "empty audio"}), 400
+    if len(audio) > MAX_AUDIO_BYTES:
+        return jsonify({"error": "audio too large"}), 413
+
+    data_url = f"data:{mime};base64," + base64.b64encode(audio).decode("ascii")
     try:
-        segs, _ = whisper.transcribe(path, language=STT_LANGUAGE, beam_size=1, vad_filter=False)
-        text = " ".join(s.text for s in segs).strip()
-        print(f"[STT] {repr(text)}")
-        return jsonify({"text": text})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        os.unlink(path)
+        result = dashboard_post(
+            "/api/audio/transcribe", {"data_url": data_url, "mime_type": mime})
+    except DashboardError as e:
+        print(f"[STT ERROR] {e}")
+        return jsonify({"error": str(e)}), e.status
+
+    # An empty transcript is a normal outcome, not an error: the dashboard maps
+    # "no speech detected" to a successful empty result so a VAD loop can just
+    # re-listen. The client already treats short text as silence.
+    text = (result.get("transcript") or "").strip()
+    print(f"[STT] {repr(text)} (provider={result.get('provider')})")
+    return jsonify({"text": text})
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -227,22 +277,23 @@ def tts():
     text = data.get("text", "").strip()
     if not text:
         return jsonify({"error": "text required"}), 400
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        out = f.name
     try:
-        proc = subprocess.run(
-            ["piper", "-m", MODEL_PATH, "-c", MODEL_CONFIG, "-f", out],
-            input=text.encode(), capture_output=True, timeout=30
-        )
-        if proc.returncode != 0:
-            return jsonify({"error": proc.stderr.decode()}), 500
-        with open(out, "rb") as f:
-            audio_b64 = base64.b64encode(f.read()).decode()
-        return jsonify({"audio": audio_b64})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        os.unlink(out)
+        result = dashboard_post("/api/audio/speak", {"text": text})
+    except DashboardError as e:
+        print(f"[TTS ERROR] {e}")
+        return jsonify({"error": str(e)}), e.status
+
+    # The dashboard returns a data URL; the client wants bare base64 in "audio".
+    # Keeping that shape means the PWA needs no change. mime is sent alongside
+    # because the configured provider decides the format (Piper WAV, others MP3)
+    # — decodeAudioData handles both, but the client should not have to guess.
+    data_url = result.get("data_url") or ""
+    if "," not in data_url:
+        return jsonify({"error": "dashboard returned no audio"}), 502
+    return jsonify({
+        "audio": data_url.split(",", 1)[1],
+        "mime": result.get("mime_type"),
+    })
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
