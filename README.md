@@ -6,7 +6,7 @@ Speak → Whisper STT → Hermes Agent → Piper TTS → plays back. No button p
 
 Works as a PWA from iPhone Safari over HTTPS.
 
-<img width="1536" height="1024" alt="Hermes Voice" src="https://github.com/user-attachments/assets/e7037983-b23e-4d62-87b0-79268a4fa48b" />
+<img width="1536" height="1024" alt="Hermes Voice" src="https://raw.githubusercontent.com/lorenzotelesco-png/hermes-voice/master/assets/hermes-showcase.svg" />
 
 ---
 
