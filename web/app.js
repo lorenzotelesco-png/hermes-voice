@@ -1,4 +1,6 @@
 const API = '';
+const NL = String.fromCharCode(10);
+const SSE_SEP = NL + NL;
 let audioCtx, analyser, stream, recorder, chunks = [];
 let isSpeaking = false, isProcessing = false, isActive = false, isMuted = false;
 let silenceTimer = null, rafId = null;
@@ -68,7 +70,17 @@ function showError(msg, ms = 6000) {
 // ── SESSION ───────────────────────────────────────────────────────
 async function startSession() {
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        // Hardware echo cancellation is what makes barge-in possible at all on a
+        // phone speaker: without it the mic hears our own reply and every sentence
+        // interrupts itself.
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
   } catch(e) {
     showError('Microfono non disponibile: ' + e.message, 8000); return;
   }
@@ -135,6 +147,14 @@ function toggleMute() {
 // the cheapest latency to buy back. 600ms still tolerates normal speech pauses.
 const SILENCE_MS = Number(new URLSearchParams(location.search).get('silence')) || 600;
 
+// Barge-in: the mic stays live while Hermes speaks so it can be interrupted.
+// The bar is higher than for normal listening because the mic still picks up
+// some of our own output even with AEC on, and a short grace period after audio
+// starts stops the first syllable of the reply from tripping the detector.
+const BARGE_IN_MULT     = 4.0;
+const BARGE_IN_GRACE_MS = 500;
+let playbackStartedAt = 0;
+
 function getRMS() {
   const d = new Uint8Array(analyser.frequencyBinCount);
   analyser.getByteTimeDomainData(d);
@@ -143,23 +163,37 @@ function getRMS() {
   return Math.sqrt(sum / d.length) * 100;
 }
 
+function startRecording() {
+  isSpeaking = true; chunks = [];
+  recorder = new MediaRecorder(stream, { mimeType: getAudioMime() });
+  recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+  recorder.start(100);
+}
+
+// Cut the reply short. The turn is abandoned, so drop the processing flag right
+// away — otherwise the recorder we are about to start would be gated out by it.
+function interruptPlayback() {
+  ttsInterrupted = true;
+  isProcessing = false;
+  if (currentAudio) { try { currentAudio.stop(); } catch(_) {} }
+}
+
 function monitorLoop() {
   if (!isActive || calibrating) return;
   const rms = getRMS();
-  const threshold = noiseFloor * 2.8;  // adaptive: 2.8x background noise
   volume = volume * 0.75 + (rms / (noiseFloor * 8)) * 0.25;
 
-  if (!isMuted && !isProcessing) {
-    if (rms > threshold) {
-      if (!isSpeaking) {
-        isSpeaking = true; chunks = [];
-        recorder = new MediaRecorder(stream, { mimeType: getAudioMime() });
-        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-        recorder.start(100);
-      }
-      clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(endSpeech, SILENCE_MS);
-    }
+  const speaking  = blobState === 'speaking';
+  const threshold = noiseFloor * (speaking ? BARGE_IN_MULT : 2.8);
+  const gateOpen  = speaking
+    ? (performance.now() - playbackStartedAt) > BARGE_IN_GRACE_MS
+    : !isProcessing;
+
+  if (!isMuted && gateOpen && rms > threshold) {
+    if (speaking) interruptPlayback();
+    if (!isSpeaking) startRecording();
+    clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(endSpeech, SILENCE_MS);
   }
   setTimeout(monitorLoop, 40);
 }
@@ -177,7 +211,9 @@ function endSpeech() {
     const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
     await handleAudio(blob);
     isProcessing = false;
-    if (isActive) { volume = 0; setState('listening', 'in ascolto'); }
+    // A barge-in may already have started the next recording while this turn was
+    // unwinding; do not reset the UI out from under it.
+    if (isActive && !isSpeaking) { volume = 0; setState('listening', 'in ascolto'); }
   };
   if (recorder.state !== 'inactive') recorder.stop();
 }
@@ -191,14 +227,6 @@ function mimeToExt(mime) {
   if (mime.includes('ogg'))  return '.ogg';
   if (mime.includes('mpeg')) return '.mp3';
   return '.webm';
-}
-
-// Split reply into sentences for pipelined TTS.
-// Splits on ". ", "! ", "? " only when followed by a non-lowercase letter
-// (avoids splitting "Dr. Smith" or "es. questo").
-function splitSentences(text) {
-  const parts = text.match(/[^!?.]+[!?.](?=\s+[^a-z\s]|\s*$)|[^!?.]+$/g);
-  return (parts || [text]).map(s => s.trim()).filter(s => s.length > 2);
 }
 
 // Fetch TTS audio for one piece of text and decode it.
@@ -222,7 +250,8 @@ function playBuffer(decoded) {
     src.connect(audioCtx.destination);
     currentAudio = src;
 
-    const onTap = () => { ttsInterrupted = true; try { src.stop(); } catch(_) {} };
+    playbackStartedAt = performance.now();
+    const onTap = () => interruptPlayback();
     document.getElementById('main-screen').addEventListener('click', onTap, { once: true });
     src.onended = () => {
       document.getElementById('main-screen').removeEventListener('click', onTap);
@@ -247,55 +276,108 @@ async function handleAudio(blob) {
 
     history.push({ role: 'user', content: text });
 
-    const chatRes  = await fetch(API + '/chat', {
+    ttsInterrupted = false;
+    const chatRes = await fetch(API + '/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ history: history.slice(-8), session_id: sessionId })
     });
-    const chatData = await chatRes.json();
-    if (chatData.error) { showError('Chat: ' + chatData.error); return; }
-    const reply = chatData.reply;
-    if (!reply) return;
-    history.push({ role: 'assistant', content: reply });
+    if (!chatRes.ok || !chatRes.body) {
+      const err = await chatRes.json().catch(() => ({}));
+      showError('Chat: ' + (err.error || chatRes.status));
+      return;
+    }
 
-    await playTTS(reply);
+    const spoken = await speakStream(chatRes);
+    if (!spoken) return;
+    // Record what was actually said, not what was generated. If the user cut in,
+    // the agent should see a truncated turn — otherwise it carries on as though
+    // the whole reply had landed.
+    history.push({
+      role: 'assistant',
+      content: ttsInterrupted ? spoken + ' [interrotto dall utente]' : spoken,
+    });
   } catch(e) {
     showError('Errore: ' + e.message);
     console.error(e);
   }
 }
 
-// Pipelined TTS: fetches sentence N+1 while sentence N is playing,
-// so the user hears the first word as soon as sentence 1 is synthesised —
-// not after the entire reply has been processed.
-async function playTTS(text) {
-  try {
-    const sentences = splitSentences(text);
-    if (!sentences.length) return;
-
-    ttsInterrupted = false;
-
-    // Kick off TTS for the first sentence immediately (we're still in 'thinking' state)
-    let pending = fetchAndDecodeTTS(sentences[0]);
-
-    for (let i = 0; i < sentences.length; i++) {
-      if (!isActive || ttsInterrupted) break;
-
-      const buffer = await pending;
-
-      // Pre-fetch next sentence before we start playing this one —
-      // overlap the network round-trip with playback time.
-      if (i + 1 < sentences.length) {
-        pending = fetchAndDecodeTTS(sentences[i + 1]);
+// Parse an SSE body incrementally. EventSource cannot be used because the chat
+// call is a POST, so the framing is handled here: events are separated by a
+// blank line, and only "data:" lines carry payload.
+async function* sseEvents(res) {
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf(SSE_SEP)) >= 0) {
+      const block = buf.slice(0, i);
+      buf = buf.slice(i + SSE_SEP.length);
+      for (const line of block.split(NL)) {
+        if (!line.startsWith('data:')) continue;
+        try { yield JSON.parse(line.slice(5).trim()); } catch (_) {}
       }
-
-      // Switch to speaking state right as first audio chunk begins
-      if (i === 0) setState('speaking', 'hermes');
-
-      await playBuffer(buffer);
     }
-  } catch(e) {
-    showError('TTS: ' + e.message);
-    console.error(e);
   }
+}
+
+// Speak the reply as it is written. The server cuts sentences and pushes them
+// down the stream; each one starts synthesizing the moment it arrives, so the
+// first word is spoken while the model is still writing the rest.
+//
+// Returns the text actually spoken, which is not the full reply when the user
+// barged in — the agent is told what it managed to say, not what it intended.
+async function speakStream(res) {
+  const queue = [];
+  let wake = null, producerDone = false, failed = null;
+
+  const producer = (async () => {
+    try {
+      for await (const ev of sseEvents(res)) {
+        if (ev.error) { failed = ev.error; break; }
+        if (ev.done) break;
+        if (!ev.sentence) continue;
+        // Synthesis starts here, not at playback time: sentence N+1 is being
+        // fetched while N is still playing.
+        queue.push({ text: ev.sentence, audio: fetchAndDecodeTTS(ev.sentence) });
+        if (wake) { wake(); wake = null; }
+      }
+    } catch (e) {
+      failed = e.message;
+    } finally {
+      producerDone = true;
+      if (wake) { wake(); wake = null; }
+    }
+  })();
+
+  const spoken = [];
+  let first = true;
+  while (!ttsInterrupted && isActive) {
+    if (!queue.length) {
+      if (producerDone) break;
+      await new Promise(r => (wake = r));
+      continue;
+    }
+    const item = queue.shift();
+    let decoded;
+    try {
+      decoded = await item.audio;
+    } catch (e) {
+      showError('TTS: ' + e.message);
+      break;
+    }
+    if (ttsInterrupted || !isActive) break;
+    if (first) { setState('speaking', 'hermes'); first = false; }
+    await playBuffer(decoded);
+    spoken.push(item.text);
+  }
+
+  await producer.catch(() => {});
+  if (failed) showError('Chat: ' + failed);
+  return spoken.join(' ');
 }

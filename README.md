@@ -16,7 +16,12 @@ Works as a PWA from iPhone Safari over HTTPS.
 - **Speech I/O delegated to Hermes** — STT and TTS run on the Hermes dashboard, so
   providers, models and voices are configured once in `config.yaml` and shared with
   every other Hermes surface. This server holds no speech stack of its own.
-- **Pipelined TTS** — sentence N+1 is fetched while N is playing; first audio in ~1 s
+- **Streaming replies** — the reply is spoken as it is written, sentence by
+  sentence, instead of after the model has finished. Synthesis for sentence N+1
+  overlaps playback of N.
+- **Barge-in** — the mic stays live while Hermes speaks; start talking and playback
+  stops mid-sentence. The agent is told what it actually managed to say, so it
+  does not carry on as though the whole reply had landed.
 - **iOS Safari compatible** — AudioContext unlock, correct `audio/mp4` MIME handling
 - **Discord mirroring** — each voice session creates a Discord thread with full transcript
 - **Zero frontend dependencies** — pure Web Audio API, no npm, no build step
@@ -33,7 +38,9 @@ iPhone (Safari PWA)
   ▼
 Flask server — port 5000          (thin proxy + static PWA, no speech stack)
   ├── POST /transcribe ──► Hermes dashboard :9119 /api/audio/transcribe ──► text
-  ├── POST /chat       ──► Hermes Agent     :8642 /v1/chat/completions  ──► reply
+  ├── POST /chat  (SSE) ─► Hermes Agent     :8642 /v1/chat/completions  ──► reply
+  │                         streamed; sentences are cut server-side and pushed
+  │                         to the client one at a time as the model writes
   │                              │
   │                        OpenRouter (deepseek-v4-flash-0731)
   │                              │
@@ -51,7 +58,19 @@ bound to loopback, so nothing but this server can reach it.
 | LLM, reasoning effort | `~/.hermes/config.yaml` → `model`, `agent.reasoning_effort` |
 | STT provider, language | `~/.hermes/config.yaml` → `stt` |
 | TTS provider, voice | `~/.hermes/config.yaml` → `tts` |
-| Endpointing, VAD | `web/app.js` (client-side) |
+| Endpointing, VAD, barge-in | `web/app.js` (client-side) |
+
+**Client tuning** (top of `web/app.js`):
+
+| Constant | Default | What it does |
+|----------|---------|--------------|
+| `SILENCE_MS` | 600 | Pause before a turn is considered over. Override live with `?silence=N` |
+| `BARGE_IN_MULT` | 4.0 | Speech trigger during playback, as a multiple of the calibrated noise floor. Lower = easier to interrupt, more likely to self-trigger |
+| `BARGE_IN_GRACE_MS` | 500 | Dead period after audio starts, so the reply cannot interrupt itself |
+
+Barge-in depends on the browser's echo cancellation (requested via
+`getUserMedia`). On a phone at speaker volume without it, the mic hears the reply
+and cuts it off immediately — if that happens, raise `BARGE_IN_MULT`.
 
 ---
 

@@ -1,5 +1,5 @@
 import base64, os, json, re, threading, urllib.request, urllib.error
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 
 # Load .env file if present (requires python-dotenv, optional)
@@ -88,6 +88,29 @@ def dashboard_post(path, payload, timeout=60):
         raise DashboardError(
             f"Dashboard unreachable at {DASHBOARD_URL} ({e.reason}). "
             f"Is `hermes dashboard` running?", status=503)
+
+
+# A sentence ends at .!? only when what follows is not a lowercase letter, so
+# "Dr. Rossi" and "es. questo" stay whole. Same rule the client used to apply,
+# moved here so the browser no longer needs to know about it.
+_SENTENCE_END = re.compile(r'[.!?](?=\s+[^a-z\s]|\s*$)')
+
+# Below this, a "sentence" is a fragment ("Ok.") and synthesizing it on its own
+# costs a round trip for a word. Hermes' own speaker pipeline uses the same floor.
+_MIN_SENTENCE_CHARS = 20
+
+
+def take_sentence(buf):
+    """Split off the first complete sentence. Returns (sentence|None, remainder)."""
+    for m in _SENTENCE_END.finditer(buf):
+        end = m.end()
+        if end >= _MIN_SENTENCE_CHARS:
+            return buf[:end].strip(), buf[end:].lstrip()
+    return None, buf
+
+
+def sse(payload):
+    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
 
 
 def clean_for_tts(text):
@@ -224,13 +247,14 @@ def chat():
         }
         messages = [system_prompt] + history
 
-        # Send messages to Hermes Gateway (stateless OpenAI-compatible mode).
-        # Context is carried by the messages array; Hermes handles fallback to
-        # Ollama locally when the cloud model is rate-limited or unavailable.
+        # Streamed, so the first sentence can be spoken while the model is still
+        # writing the rest. Waiting for the complete reply before synthesizing was
+        # the single largest source of dead air in this pipeline.
         payload = json.dumps({
             "model": HERMES_MODEL,
             "messages": messages,
             "max_tokens": HERMES_MAX_TOKENS,
+            "stream": True,
         }).encode()
         headers = {"Content-Type": "application/json"}
         if HERMES_API_KEY:
@@ -243,23 +267,7 @@ def chat():
             # which rotates per voice session.
             headers["X-Hermes-Session-Key"] = "hermes-voice:pwa"
         req = urllib.request.Request(HERMES_API, data=payload, headers=headers)
-        with urllib.request.urlopen(req, timeout=60) as r:
-            result = json.loads(r.read())
-
-        reply_raw = result["choices"][0]["message"]["content"].strip()
-        reply     = clean_for_tts(reply_raw)
-        print(f"[HERMES] {repr(reply[:80])}")
-
-        # Keep the same session_id for Discord thread continuity
-        state = _discord_states.setdefault(session_id or "default", {})
-        threading.Thread(
-            target=mirror_to_discord,
-            args=(user_text, reply_raw, state),
-            daemon=True
-        ).start()
-
-        return jsonify({"reply": reply, "session_id": session_id})
-
+        upstream = urllib.request.urlopen(req, timeout=60)
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")[:300]
         print(f"[CHAT ERROR] HTTP {e.code}: {body}")
@@ -270,6 +278,68 @@ def chat():
     except Exception as e:
         print(f"[CHAT ERROR] {e}")
         return jsonify({"error": str(e)}), 500
+
+    def generate():
+        buf, full, event = "", "", ""
+        try:
+            for raw in upstream:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line:
+                    event = ""          # blank line closes an SSE event
+                    continue
+                if line.startswith("event:"):
+                    event = line[6:].strip()
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                # Hermes emits event: hermes.tool.progress for tool-start UX.
+                # It is not reply text and must never reach the speaker.
+                if event and event != "message":
+                    continue
+                try:
+                    chunk = json.loads(data)
+                except ValueError:
+                    continue
+                delta = (chunk.get("choices") or [{}])[0].get("delta", {}).get("content")
+                if not delta:
+                    continue
+                full += delta
+                buf  += delta
+                while True:
+                    sentence, buf = take_sentence(buf)
+                    if not sentence:
+                        break
+                    spoken = clean_for_tts(sentence)
+                    if spoken:
+                        yield sse({"sentence": spoken})
+
+            # Whatever is left never reached a sentence boundary — say it anyway,
+            # otherwise a reply that ends without punctuation is silently dropped.
+            tail = clean_for_tts(buf)
+            if tail:
+                yield sse({"sentence": tail})
+
+            print(f"[HERMES] {repr(full[:80])}")
+            state = _discord_states.setdefault(session_id or "default", {})
+            threading.Thread(target=mirror_to_discord,
+                             args=(user_text, full, state), daemon=True).start()
+            yield sse({"done": True, "reply": clean_for_tts(full)})
+        except Exception as e:
+            print(f"[CHAT STREAM ERROR] {e}")
+            yield sse({"error": str(e)})
+        finally:
+            upstream.close()
+
+    return Response(generate(), mimetype="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        # ngrok and most reverse proxies buffer responses by default, which would
+        # hold every sentence back until the stream ends and undo the whole point.
+        "X-Accel-Buffering": "no",
+    })
+
 
 @app.route("/tts", methods=["POST"])
 def tts():
