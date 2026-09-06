@@ -390,7 +390,7 @@ async function* sseEvents(res) {
 // barged in — the agent is told what it managed to say, not what it intended.
 async function speakStream(res) {
   const queue = [];
-  let wake = null, producerDone = false, failed = null;
+  let wake = null, producerDone = false, failed = null, nSent = 0;
 
   const producer = (async () => {
     try {
@@ -398,7 +398,7 @@ async function speakStream(res) {
         if (ev.error) { failed = ev.error; break; }
         if (ev.done) break;
         if (!ev.sentence) continue;
-        T('frase' + (queue.length + 1));
+        T('frase' + (++nSent));
         // Synthesis starts here, not at playback time: sentence N+1 is being
         // fetched while N is still playing.
         queue.push({ text: ev.sentence, audio: fetchAndDecodeTTS(ev.sentence) });

@@ -100,11 +100,20 @@ _SENTENCE_END = re.compile(r'[.!?](?=\s+[^a-z\s]|\s*$)')
 _MIN_SENTENCE_CHARS = 20
 
 
-def take_sentence(buf):
+# The FIRST fragment is allowed to be much shorter. A reply that opens with
+# "Certo!" (6 chars) would otherwise be held back until the next sentence
+# completed — measured on a phone, that is the difference between hearing
+# something at 5s and hearing nothing until 8.5s. Paying a synthesis round trip
+# for one word is worth it exactly once, at the start, where all the silence is.
+_MIN_FIRST_CHARS = 4
+
+
+def take_sentence(buf, first=False):
     """Split off the first complete sentence. Returns (sentence|None, remainder)."""
+    floor = _MIN_FIRST_CHARS if first else _MIN_SENTENCE_CHARS
     for m in _SENTENCE_END.finditer(buf):
         end = m.end()
-        if end >= _MIN_SENTENCE_CHARS:
+        if end >= floor:
             return buf[:end].strip(), buf[end:].lstrip()
     return None, buf
 
@@ -305,6 +314,7 @@ def chat():
 
     def generate():
         buf, full, event = "", "", ""
+        n_sent = 0
         try:
             for raw in upstream:
                 line = raw.decode("utf-8", errors="replace").strip()
@@ -333,11 +343,12 @@ def chat():
                 full += delta
                 buf  += delta
                 while True:
-                    sentence, buf = take_sentence(buf)
+                    sentence, buf = take_sentence(buf, first=(n_sent == 0))
                     if not sentence:
                         break
                     spoken = clean_for_tts(sentence)
                     if spoken:
+                        n_sent += 1
                         yield sse({"sentence": spoken})
 
             # Whatever is left never reached a sentence boundary — say it anyway,
