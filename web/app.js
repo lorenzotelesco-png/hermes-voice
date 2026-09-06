@@ -170,6 +170,19 @@ const MIN_UTTERANCE_MS = qs('minms', 500);
 
 let speechStartedAt = 0;
 
+// ── Strumentazione (?debug=1) ─────────────────────────────────────
+// Where the time actually goes, shown on the phone. Guessing by ear cannot
+// distinguish "the model is slow" from "the sentences all arrive at once
+// because something buffered the stream" — and those need opposite fixes.
+const DEBUG = new URLSearchParams(location.search).has('debug');
+let mark0 = 0, marks = [];
+const T = (label) => {
+  if (!DEBUG) return;
+  marks.push([label, performance.now() - mark0]);
+  const el = document.getElementById('debug');
+  if (el) el.textContent = marks.map(([l, ms]) => `${l} ${(ms / 1000).toFixed(2)}`).join('  ');
+};
+
 // Barge-in: the mic stays live while Hermes speaks so it can be interrupted.
 // The bar is higher than for normal listening because the mic still picks up
 // some of our own output even with AEC on, and a short grace period after audio
@@ -247,6 +260,7 @@ function endSpeech() {
   }
 
   isSpeaking = false; isProcessing = true;
+  mark0 = performance.now(); marks = []; T('fine-voce');
   setState('thinking', 'elaboro...');
   recorder.onstop = async () => {
     const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
@@ -312,6 +326,7 @@ async function handleAudio(blob) {
     const sttRes  = await fetch(API + '/transcribe', { method: 'POST', body: fd });
     const sttData = await sttRes.json();
     if (sttData.error) { showError('STT: ' + sttData.error); return; }
+    T('stt');
     const text = (sttData.text || '').trim();
     if (text.length < 2) return;   // silent or noise
 
@@ -383,6 +398,7 @@ async function speakStream(res) {
         if (ev.error) { failed = ev.error; break; }
         if (ev.done) break;
         if (!ev.sentence) continue;
+        T('frase' + (queue.length + 1));
         // Synthesis starts here, not at playback time: sentence N+1 is being
         // fetched while N is still playing.
         queue.push({ text: ev.sentence, audio: fetchAndDecodeTTS(ev.sentence) });
@@ -413,7 +429,7 @@ async function speakStream(res) {
       break;
     }
     if (ttsInterrupted || !isActive) break;
-    if (first) { setState('speaking', 'hermes'); first = false; }
+    if (first) { T('primo-suono'); setState('speaking', 'hermes'); first = false; }
     await playBuffer(decoded);
     spoken.push(item.text);
   }
