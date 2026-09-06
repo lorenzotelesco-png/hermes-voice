@@ -143,11 +143,23 @@ model:
   api_mode: chat_completions
 
 agent:
-  # This model ships with reasoning ON at effort "high". For voice that is the
-  # single worst latency cost: every turn burns thinking tokens before the first
-  # spoken word. "low" is the lowest level this route accepts (max|high|low);
-  # Hermes clamps downward to the nearest supported level.
-  reasoning_effort: low
+  # Disable thinking outright. Measured time to the first SPEAKABLE token
+  # (delta.content, which is what TTS can actually say):
+  #
+  #   reasoning off      ~1.1 s
+  #   reasoning default  ~5.6 s
+  #   reasoning "low"    ~9.9 s
+  #
+  # "low" is the lowest effort this route accepts, but it is not "little
+  # thinking": it still emitted 130-360 reasoning chunks before any content.
+  # For a voice turn every one of those is silence. Lowest-available-effort and
+  # disabled are different switches — this needs the second one.
+  reasoning_effort: none
+
+provider_routing:
+  # Default is "price", which routes to the cheapest provider regardless of how
+  # slow it is. Voice cares about time-to-first-token.
+  sort: latency
 
 stt:
   provider: deepinfra          # whisper-large-v3-turbo, ~$0.0002/min
