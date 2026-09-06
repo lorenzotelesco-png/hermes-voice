@@ -12,7 +12,8 @@ EnvironmentFile=-/root/.hermes/.env
 # gets 401 on /transcribe and /tts after each restart.
 # Bound to loopback on purpose: hermes-voice is the only client, and a public
 # bind would require configuring an auth provider.
-ExecStart=/root/.hermes/hermes-agent/.venv/bin/hermes dashboard     --host 127.0.0.1 --port 9119 --no-open
+# Verify the venv path on your install (venv/ vs .venv/).
+ExecStart=/root/.hermes/hermes-agent/venv/bin/hermes dashboard     --host 127.0.0.1 --port 9119 --no-open
 Restart=always
 RestartSec=5
 StartLimitBurst=5

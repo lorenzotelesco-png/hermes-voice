@@ -7,7 +7,12 @@ Type=simple
 User=root
 WorkingDirectory=/root/.hermes/hermes-agent
 EnvironmentFile=-/root/.hermes/.env
-ExecStart=/root/.hermes/hermes-agent/.venv/bin/hermes gateway
+# "hermes gateway" is a command group, not a runner: without the "run"
+# subcommand nothing binds port 8642. --replace takes over from an already
+# running gateway instead of refusing to start.
+# Verify the venv path on your install — it is venv/ on installs that predate
+# the uv migration and .venv/ on newer ones.
+ExecStart=/root/.hermes/hermes-agent/venv/bin/hermes gateway run --replace
 Restart=always
 RestartSec=5
 StartLimitBurst=5

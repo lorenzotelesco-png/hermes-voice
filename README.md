@@ -313,6 +313,10 @@ To enable Discord integration (auto-thread + voice mirroring):
 
 **Hermes returns errors** — check `journalctl -u hermes-agent -n 50`.
 
+**Nothing is listening on 8642** — `hermes gateway` is a command group. The unit file must run `hermes gateway run --replace`; plain `hermes gateway` binds nothing.
+
+**"Gateway already running"** — a second gateway is up, typically a *user* unit (`systemctl --user status hermes-gateway`) alongside the system one. Pick one and disable the other, or they fight over the port on every boot.
+
 **`/chat` returns 401/403** — `HERMES_API_KEY` in this repo's `.env` must equal `API_SERVER_KEY` in `~/.hermes/.env`. Hermes requires this token on every deployment, loopback included.
 
 **`/transcribe` or `/tts` returns 401** — `HERMES_DASHBOARD_TOKEN` must equal `HERMES_DASHBOARD_SESSION_TOKEN` in the dashboard's environment. If that variable was never set, the dashboard picked a random token at boot: set it in `~/.hermes/.env`, then `systemctl restart hermes-dashboard`.
