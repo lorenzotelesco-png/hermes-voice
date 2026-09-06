@@ -162,6 +162,20 @@ def sse(payload):
     return _FLUSH_PAD + "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
 
 
+def dashboard_get(path, timeout=15):
+    req = urllib.request.Request(
+        f"{DASHBOARD_URL}{path}", headers={"X-Hermes-Session-Token": DASHBOARD_TOKEN})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise DashboardError("Dashboard rejected the session token.")
+        raise DashboardError(f"Dashboard HTTP {e.code}")
+    except urllib.error.URLError as e:
+        raise DashboardError(f"Dashboard unreachable ({e.reason})", status=503)
+
+
 def clean_for_tts(text):
     text = re.sub(r'<@!?\d+>', '', text)
     text = re.sub(r'<#\d+>', '', text)
@@ -296,6 +310,33 @@ def health():
 # The dashboard rejects uploads above this; we check first so an oversized clip
 # fails here with a clear message instead of as an opaque 413 from the proxy.
 MAX_AUDIO_BYTES = 25 * 1024 * 1024
+
+
+@app.route("/voice-config")
+def voice_config():
+    """The STT settings the client may use to reach the provider itself.
+
+    Audio currently makes four hops — phone, tunnel, here, dashboard, provider —
+    and measured from a phone that costs ~3.4s against ~1.4s of actual
+    inference. Nearly all the difference is carriage. When the configured
+    provider can be reached from a browser, the client goes straight there and
+    only the transcript comes back to us.
+
+    This hands out a provider credential, so it is only ever as safe as the gate
+    in front of it. That is why the gate fails closed: with VOICE_AUTH_TOKEN
+    unset this route answers 503 like everything else, rather than handing the
+    key to whoever has the URL. The client keeps it in memory for the session
+    and never persists it.
+    """
+    try:
+        cfg = dashboard_get("/api/audio/voice-config")
+    except DashboardError as e:
+        # Never fail the session over this: the relay path still works.
+        print(f"[VOICE-CONFIG] {e}")
+        return jsonify({"stt": {"mode": "relay", "reason": str(e)}})
+    stt = (cfg or {}).get("stt") or {"mode": "relay", "reason": "no stt block"}
+    print(f"[VOICE-CONFIG] stt mode={stt.get('mode')} provider={stt.get('provider')}")
+    return jsonify({"stt": stt})
 
 
 @app.route("/transcribe", methods=["POST"])

@@ -37,7 +37,10 @@ iPhone (Safari PWA)
   │  HTTPS (ngrok tunnel)
   ▼
 Flask server — port 5000          (thin proxy + static PWA, no speech stack)
+  ├── GET  /voice-config ► Hermes dashboard :9119 /api/audio/voice-config
+  │                         so the phone can talk to the STT provider itself
   ├── POST /transcribe ──► Hermes dashboard :9119 /api/audio/transcribe ──► text
+  │                         (fallback only — see client-direct below)
   ├── POST /chat  (SSE) ─► Hermes Agent     :8642 /v1/chat/completions  ──► reply
   │                         streamed; sentences are cut server-side and pushed
   │                         to the client one at a time as the model writes
@@ -407,6 +410,29 @@ median 1288ms reduced vs 1159ms full, against a standard deviation of 712ms.
 Two blocks of the *same* configuration differed by 383ms, so within-arm drift
 dwarfs the difference. Prefill is essentially free on this path; the latency
 lives elsewhere.
+
+## Client-direct speech-to-text
+
+Audio used to make four hops — phone, tunnel, this server, dashboard, provider.
+Measured from a phone that cost ~3.4s against ~1.4s of actual transcription: most
+of it was carriage, not inference.
+
+When the configured STT provider is reachable from a browser, the phone now uploads
+straight to it and only the transcript comes back. `GET /voice-config` proxies the
+dashboard's resolved settings, so `config.yaml` stays the single source of truth —
+the client decides nothing, it just stops being a relay.
+
+Providers that can only run on the gateway host (local whisper, command providers)
+resolve to `{"mode": "relay"}` and the old path is used unchanged. So does a
+dashboard that is down. The client also falls back for the rest of the session if
+a direct upload fails, so a revoked key degrades instead of breaking the
+conversation.
+
+**This route hands out a provider credential**, which makes it exactly as safe as
+the gate in front of it — the reason that gate fails closed. The key is held in a
+JavaScript variable for the session and never written to `localStorage` or a URL.
+With `?debug=1` the timing strip shows `stt-diretto` or `stt-relay`, so which path
+ran is never a guess.
 
 ## Access control
 

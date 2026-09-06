@@ -11,6 +11,9 @@ function makeSessionId() {
   return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
     (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
 }
+// STT settings fetched once per session. Held in memory only — this carries a
+// provider credential and must never reach localStorage or a URL.
+let sttDirect = null;
 let volume = 0;
 let noiseFloor = 5;      // calibrated dynamically
 let calibrating = true;
@@ -97,6 +100,21 @@ async function startSession() {
   analyser.smoothingTimeConstant = 0.5;
   audioCtx.createMediaStreamSource(stream).connect(analyser);
 
+  // Fire and forget: if it is slow or fails we simply use the relay this turn.
+  fetch(API + '/voice-config')
+    .then(r => r.json())
+    .then(cfg => {
+      const stt = cfg && cfg.stt;
+      if (stt && stt.mode === 'direct' && stt.wire === 'openai-multipart'
+          && stt.base_url && stt.api_key) {
+        sttDirect = stt;
+        console.log('STT diretto:', stt.provider, stt.model);
+      } else {
+        console.log('STT via relay:', (stt && stt.reason) || 'non disponibile');
+      }
+    })
+    .catch(() => {});
+
   calibrating = true; calibSamples = [];
   setState('idle', 'calibrazione...');
   requestAnimationFrame(animBlobs);
@@ -129,7 +147,7 @@ function stopSession() {
   if (stream) stream.getTracks().forEach(t => t.stop());
   if (audioCtx) audioCtx.close();
   if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-  history = []; sessionId = null;
+  history = []; sessionId = null; sttDirect = null;
   blobs.forEach(b => { b.style.transform = ''; b.style.opacity = ''; });
   document.getElementById('main-screen').style.display  = 'none';
   document.getElementById('start-screen').style.display = 'flex';
@@ -317,17 +335,52 @@ function playBuffer(decoded) {
   });
 }
 
+// Straight to the provider, skipping tunnel, server and dashboard. Measured
+// from a phone those hops cost about as much as the transcription itself.
+async function transcribeDirect(blob, ext) {
+  const fd = new FormData();
+  fd.append('file', blob, 'speech' + ext);
+  fd.append('model', sttDirect.model);
+  if (sttDirect.language) fd.append('language', sttDirect.language);
+  const res = await fetch(sttDirect.base_url + '/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + sttDirect.api_key },
+    body: fd,
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const d = await res.json();
+  return (d.text || '').trim();
+}
+
+async function transcribeRelay(blob, ext) {
+  const fd = new FormData();
+  fd.append('audio', blob, 'speech' + ext);
+  const res = await fetch(API + '/transcribe', { method: 'POST', body: fd });
+  const d = await res.json();
+  if (d.error) throw new Error(d.error);
+  return (d.text || '').trim();
+}
+
 async function handleAudio(blob) {
   try {
-    const fd  = new FormData();
     const ext = mimeToExt(recorder.mimeType);
-    fd.append('audio', blob, 'speech' + ext);
-
-    const sttRes  = await fetch(API + '/transcribe', { method: 'POST', body: fd });
-    const sttData = await sttRes.json();
-    if (sttData.error) { showError('STT: ' + sttData.error); return; }
-    T('stt');
-    const text = (sttData.text || '').trim();
+    let text;
+    if (sttDirect) {
+      try {
+        text = await transcribeDirect(blob, ext);
+        T('stt-diretto');
+      } catch (e) {
+        // A revoked key or a provider hiccup must not end the conversation:
+        // drop to the relay for this turn and stop trying direct afterwards.
+        console.warn('STT diretto fallito, passo al relay:', e.message);
+        sttDirect = null;
+        text = await transcribeRelay(blob, ext);
+        T('stt-relay');
+      }
+    } else {
+      text = await transcribeRelay(blob, ext);
+      T('stt');
+    }
     if (text.length < 2) return;   // silent or noise
 
     history.push({ role: 'user', content: text });

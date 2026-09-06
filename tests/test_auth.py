@@ -10,10 +10,10 @@ c = srv.app.test_client()
 TOK = "segreto-di-prova"
 
 # senza credenziali: tutto chiuso
-for path in ["/", "/app.js", "/chat", "/tts", "/transcribe"]:
-    r = c.get(path) if path in ("/", "/app.js") else c.post(path, json={})
+for path in ["/", "/app.js", "/chat", "/tts", "/transcribe", "/voice-config"]:
+    r = c.get(path) if path in ("/", "/app.js", "/voice-config") else c.post(path, json={})
     assert r.status_code == 401, f"{path} doveva dare 401, ha dato {r.status_code}"
-print("senza token: 401 su /, /app.js, /chat, /tts, /transcribe  OK")
+print("senza token: 401 su /, /app.js, /chat, /tts, /transcribe, /voice-config  OK")
 
 # /health resta pubblico per il monitoraggio
 assert c.get("/health").status_code == 200

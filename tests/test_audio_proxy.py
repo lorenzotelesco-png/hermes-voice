@@ -51,5 +51,25 @@ srv.urllib.request.urlopen = fake_down
 r = c.post("/tts?k=test-auth", json={"text":"x"})
 print("tts down:", r.status_code, "->", r.get_json()["error"][:60]+"...")
 assert r.status_code==503
+# --- /voice-config: passa attraverso la modalita' direct ---
+def fake_cfg(req, timeout=None):
+    assert '/api/audio/voice-config' in req.full_url
+    return Resp({"ok": True, "stt": {"mode": "direct", "wire": "openai-multipart",
+                                     "provider": "deepinfra", "api_key": "k-di",
+                                     "base_url": "https://api.deepinfra.com/v1/openai",
+                                     "model": "openai/whisper-large-v3-turbo",
+                                     "language": "it"}})
+srv.urllib.request.urlopen = fake_cfg
+j = c.get("/voice-config?k=test-auth").get_json()
+print("voice-config:", {k: v for k, v in j["stt"].items() if k != "api_key"})
+assert j["stt"]["mode"] == "direct" and j["stt"]["api_key"] == "k-di"
+
+# dashboard giu': deve degradare a relay, non rompere la sessione
+srv.urllib.request.urlopen = fake_down
+j = c.get("/voice-config?k=test-auth").get_json()
+print("voice-config con dashboard giu':", j["stt"]["mode"])
+assert j["stt"]["mode"] == "relay", j
+print("  degrada a relay invece di fallire  OK")
+
 print()
-print("OK: proxy transcribe/tts, auth header, 401 e 503 distinti")
+print("OK: proxy transcribe/tts, auth header, 401 e 503 distinti, voice-config")
