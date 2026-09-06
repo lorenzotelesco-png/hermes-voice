@@ -184,6 +184,21 @@ def mirror_to_discord(user_text, hermes_reply, discord_state):
 _discord_states = {}
 
 # ── Routes ────────────────────────────────────────────────────────
+@app.after_request
+def no_cache_pwa(resp):
+    """Never let the PWA shell be cached.
+
+    Safari caches aggressively for a page added to the home screen, so a
+    deployed app.js can keep running the previous version with no visible sign
+    that anything is stale — the change looks like it simply did not work.
+    These files are a few KB; re-fetching them costs nothing next to the
+    confusion of debugging a version that is not the one on disk.
+    """
+    if request.path in ("/", "/index.html", "/app.js"):
+        resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
+
+
 @app.route("/")
 def index():
     return send_from_directory("../web", "index.html")
