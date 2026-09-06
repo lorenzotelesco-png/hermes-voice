@@ -352,6 +352,15 @@ To enable Discord integration (auto-thread + voice mirroring):
 
 **Hermes returns errors** — check `journalctl -u hermes-agent -n 50`.
 
+**A question that needs the web takes 15s+** — check `web.backend` in `config.yaml`. Left empty, Hermes falls back to its keyless ring (Exa/Parallel/Firecrawl/Keenable) and retries across vendors on every rate limit, so one search costs several wasted round trips. Setting a keyed backend cut the average from 15.3s to 8.6s here, and the worst case from 29s to 12s — **an API key already sitting in `.env` is not used unless `web.backend` names that provider**:
+
+```yaml
+web:
+  backend: "tavily"
+  search_backend: "tavily"
+  extract_backend: "tavily"
+```
+
 **Nothing is listening on 8642** — `hermes gateway` is a command group. The unit file must run `hermes gateway run --replace`; plain `hermes gateway` binds nothing.
 
 **"Gateway already running"** — a second gateway is up, typically a *user* unit (`systemctl --user status hermes-gateway`) alongside the system one. Pick one and disable the other, or they fight over the port on every boot.
