@@ -1,6 +1,6 @@
 [Unit]
 Description=Hermes Voice Flask Server (port 5000)
-After=network.target hermes-agent.service
+After=network.target hermes-agent.service hermes-dashboard.service
 
 [Service]
 Type=simple
