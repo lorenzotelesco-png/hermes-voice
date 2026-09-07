@@ -164,13 +164,26 @@ _MIN_SENTENCE_CHARS = 20
 _MIN_FIRST_CHARS = 4
 
 
+# For the opening chunk only, a clause boundary is good enough. A reply that
+# starts "Certo, il meteo a Milano oggi e sereno con una massima di ventidue
+# gradi." is ONE sentence: waiting for its full stop holds every bit of audio
+# hostage behind the whole thing. Cutting at the comma makes "Certo," speakable
+# immediately. Later chunks keep the full-stop rule — they are synthesized while
+# the previous one plays, so there is nothing to gain and prosody to lose.
+_CLAUSE_END = re.compile(r'[,;:](?=\s)')
+
+
 def take_sentence(buf, first=False):
-    """Split off the first complete sentence. Returns (sentence|None, remainder)."""
-    floor = _MIN_FIRST_CHARS if first else _MIN_SENTENCE_CHARS
+    """Split off the first speakable chunk. Returns (chunk|None, remainder)."""
+    if first:
+        for pattern in (_SENTENCE_END, _CLAUSE_END):
+            for m in pattern.finditer(buf):
+                if m.end() >= _MIN_FIRST_CHARS:
+                    return buf[:m.end()].strip(), buf[m.end():].lstrip()
+        return None, buf
     for m in _SENTENCE_END.finditer(buf):
-        end = m.end()
-        if end >= floor:
-            return buf[:end].strip(), buf[end:].lstrip()
+        if m.end() >= _MIN_SENTENCE_CHARS:
+            return buf[:m.end()].strip(), buf[m.end():].lstrip()
     return None, buf
 
 
