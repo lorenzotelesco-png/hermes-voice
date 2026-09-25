@@ -20,6 +20,8 @@ os.environ.update({
     "VOICE_AUTH_TOKEN": TOKEN,
     "HUB_DB": os.path.join(TMP, "hub.db"),
     "HUB_WEB_DIST": os.path.join(TMP, "dist"),
+    "HUB_MONITOR": "0",
+    "HUB_CONTROL_SOCKET": os.path.join(TMP, "control.sock"),
 })
 
 import httpx  # noqa: E402

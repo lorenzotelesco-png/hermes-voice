@@ -43,6 +43,26 @@ DASHBOARD_URL = os.environ.get("HERMES_DASHBOARD_URL", "http://127.0.0.1:9119")
 DASHBOARD_TOKEN = os.environ.get("HERMES_DASHBOARD_TOKEN", "")
 
 
+# ── Server (phase 2) ──────────────────────────────────────────────
+def _units(value):
+    return [u.strip().removesuffix(".service") for u in value.split(",") if u.strip()]
+
+
+# Services shown in the Server tab and watched for the "down for 2 minutes"
+# alert.
+MONITORED = _units(os.environ.get(
+    "HUB_SERVICES",
+    "hermes-agent,hermes-dashboard,hermes-hub,ngrok-tunnel,hermes-webui,tailscaled,warp-svc,warp-socks-ts"))
+# Services the app offers to restart. The root-side helper keeps its own list
+# and has the last word: this one only decides which buttons appear.
+RESTARTABLE = _units(os.environ.get(
+    "HUB_RESTARTABLE", "hermes-agent,hermes-dashboard,hermes-webui,ngrok-tunnel,warp-svc,warp-socks-ts"))
+# Root-side helper for restarts and service journals (deploy/control/).
+CONTROL_SOCKET = os.environ.get("HUB_CONTROL_SOCKET", "/run/hermes-hub-control.sock")
+# The watcher behind the push alerts. Tests turn it off.
+MONITOR = os.environ.get("HUB_MONITOR", "1") != "0"
+
+
 def warnings():
     """Misconfigurations worth a line in the journal at startup."""
     out = []
