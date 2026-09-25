@@ -1,6 +1,8 @@
 [Unit]
 Description=Hermes Hub (voice + management app, 127.0.0.1:5000)
 After=network.target hermes-agent.service hermes-dashboard.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -9,14 +11,14 @@ Group=hermes-hub
 WorkingDirectory=/opt/hermes-hub
 EnvironmentFile=/opt/hermes-hub/.env
 Environment=HUB_DB=/var/lib/hermes-hub/hub.db
+# Unbuffered, or the [CHAT]/[STT] lines reach the journal minutes late.
+Environment=PYTHONUNBUFFERED=1
 StateDirectory=hermes-hub
 # Loopback only: ngrok reaches it locally, nothing else can.
 # No access log: the one-time ?k=<token> login would land in the journal in clear.
 ExecStart=/opt/hermes-hub/venv/bin/uvicorn hub.main:app --app-dir server --host 127.0.0.1 --port 5000 --no-access-log
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=hermes-hub
