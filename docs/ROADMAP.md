@@ -418,6 +418,17 @@ Da sapere:
 - Icona, manifest e worker delle notifiche ora sono pubblici: iOS li chiede
   senza cookie e i 401 riempivano il registro.
 
+**Incidente durante la prova dei riavvii.** Il riavvio di prova della Web UI
+(`hermes-webui`, nesquena) l'ha fatta entrare in un ciclo di ripartenze: dopo
+l'aggiornamento di Hermes del mattino (v0.21.5) chi importa Hermes viene
+rilanciato nel suo nuovo Python 3.14 gestito da `hermes pm`, dove manca
+`pyyaml`, che la Web UI richiede. Girava ancora solo perché avviata il 23/09.
+Fermata a mano dopo 88 ripartenze (circa un quarto di CPU); da decidere se
+ripararla o spegnerla del tutto. Ha anche mostrato un difetto del sorvegliante,
+corretto: un ciclo di ripartenze ora dà un solo avviso "continua a ripartire"
+(3 riavvii in 10 minuti) e uno quando si stabilizza, e i riavvii sporadici al
+massimo una notifica ogni 30 minuti.
+
 Da fare con il telefono: attivare "Avvisi sul telefono" dall'app sulla
 schermata Home e mandare la notifica di prova (la consegna tramite Apple non si
 può provare dal PC).
