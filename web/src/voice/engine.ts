@@ -57,6 +57,14 @@ const MIN_UTTERANCE_MS = qs('minms', 500);
 const BARGE_IN_MULT = 4.0;
 const BARGE_IN_GRACE_MS = 500;
 
+// Lowest noise floor the thresholds are computed from. Measured on the phone
+// (float samples) a quiet room is ~0.03 and a spoken turn peaks ~11: with the
+// old floor of 3 the bar to open a turn sat at 8.4, too close to the voice.
+// Barge-in keeps the old floor, because what it must not mistake for speech
+// is our own reply leaking past echo cancellation, not the room.
+const MIN_FLOOR = qs('floor', 2);
+const MIN_BARGE_FLOOR = 3;
+
 // Four bands across the voice range, one per blob on screen, low to high.
 // Speech moves between them syllable by syllable, which is what makes the
 // animation follow the words instead of just their loudness.
@@ -217,13 +225,15 @@ export class VoiceEngine {
     // No custom sampleRate — let Safari use its native rate
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 1024;
-    this.analyser.smoothingTimeConstant = 0.5;
+    // Only the frequency data (the animation) is smoothed; the VAD reads the
+    // time-domain samples, which this does not touch.
+    this.analyser.smoothingTimeConstant = 0.75;
     ctx.createMediaStreamSource(this.stream).connect(this.analyser);
     // Everything Hermes says passes through here on its way out, so the
     // animation can move with the actual sound of the reply.
     this.outAnalyser = ctx.createAnalyser();
     this.outAnalyser.fftSize = 1024;
-    this.outAnalyser.smoothingTimeConstant = 0.55;
+    this.outAnalyser.smoothingTimeConstant = 0.75;
     this.outAnalyser.minDecibels = -85;
     this.outAnalyser.maxDecibels = -20;
     this.outAnalyser.connect(ctx.destination);
@@ -280,7 +290,7 @@ export class VoiceEngine {
     setTimeout(() => {
       if (!this.active) return;
       const s = this.calibSamples;
-      this.noiseFloor = Math.max(3, s.length ? s.reduce((a, b) => a + b, 0) / s.length : 5);
+      this.noiseFloor = Math.max(MIN_FLOOR, s.length ? s.reduce((a, b) => a + b, 0) / s.length : 5);
       // A little above the room's average, so its hum reads as stillness.
       const n = this.calibBands.length || 1;
       this.micFloor = this.micFloor.map((_, b) =>
@@ -432,9 +442,9 @@ export class VoiceEngine {
 
     // Already recording? Then the only job is to notice we are still talking,
     // and a much lower bar is enough for that.
-    const threshold = this.noiseFloor * (this.isSpeaking ? CONTINUE_MULT
-                                       : speaking ? BARGE_IN_MULT
-                                       : START_MULT);
+    const threshold = this.isSpeaking ? this.noiseFloor * CONTINUE_MULT
+                    : speaking ? Math.max(this.noiseFloor, MIN_BARGE_FLOOR) * BARGE_IN_MULT
+                    : this.noiseFloor * START_MULT;
 
     if (!this.snap.muted && gateOpen && rms > threshold) {
       if (speaking) this.interrupt();
