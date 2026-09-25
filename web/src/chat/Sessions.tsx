@@ -32,6 +32,7 @@ export function Sessions() {
   const [more, setMore] = useState(false);
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<Row[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const searchSeq = useRef(0);
@@ -53,8 +54,9 @@ export function Sessions() {
 
   useEffect(() => {
     const term = q.trim();
-    if (term.length < 2) { setHits(null); return; }
     const seq = ++searchSeq.current;
+    if (term.length < 2) { setHits(null); setSearching(false); return; }
+    setSearching(true);
     const t = setTimeout(async () => {
       try {
         const data = await api(`/api/sessions/search?q=${encodeURIComponent(term)}`);
@@ -64,11 +66,13 @@ export function Sessions() {
       } catch (e: any) {
         if (seq === searchSeq.current) setError(e.message);
       }
+      if (seq === searchSeq.current) setSearching(false);
     }, 300);
     return () => clearTimeout(t);
   }, [q]);
 
-  const list = hits ?? rows;
+  // While a search runs, the old list would read as its result.
+  const list = searching ? [] : hits ?? rows;
   const current = chat.snapshot.sessionId;
 
   return (
@@ -89,7 +93,8 @@ export function Sessions() {
       </div>
       <div class="list">
         {error && <p class="list-note">Non riesco a caricare: {error}</p>}
-        {hits && !hits.length && <p class="list-note">Nessun risultato</p>}
+        {searching && <p class="list-note">cerco…</p>}
+        {!searching && hits && !hits.length && <p class="list-note">Nessun risultato</p>}
         {list.map(r => (
           <button key={r.id} class={`row${r.id === current ? ' is-current' : ''}`} onClick={() => open(r.id)}>
             <div class="row-top">

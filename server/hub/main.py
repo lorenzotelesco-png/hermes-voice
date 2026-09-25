@@ -11,12 +11,17 @@ import re
 import time
 
 from fastapi import FastAPI, File, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
 from . import audit, config, hermes, runs, security, transcript
 from .speech import sse
 
 app = FastAPI(title="Hermes Hub", docs_url=None, redoc_url=None, openapi_url=None)
+# A long transcript is ~100 KB of JSON, which the link from China to the
+# server takes over a second to carry; compressed it is a fifth of that.
+# Starlette never compresses text/event-stream, which must flush as it goes.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 for line in config.warnings():
     print("WARNING:", line)

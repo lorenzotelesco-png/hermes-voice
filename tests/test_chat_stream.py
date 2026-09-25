@@ -50,8 +50,10 @@ def events(text):
 _setup.mock(hermes_api)
 with _setup.signed_in_client() as c:
     # --- voice turn, no session yet ---
-    r = c.post("/api/chat", json={"message": "quanto fa 12 per 3?", "voice": True})
+    r = c.post("/api/chat", json={"message": "quanto fa 12 per 3?", "voice": True},
+               headers={"Accept-Encoding": "gzip"})
     assert r.status_code == 200 and r.headers.get("x-accel-buffering") == "no", r.status_code
+    assert "content-encoding" not in r.headers, "the event stream was compressed: it would not flush"
     evs = events(r.text)
     for e in evs:
         print("  ", e["type"], {k: v for k, v in e.items() if k not in ("type", "seq")})
