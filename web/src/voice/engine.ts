@@ -15,6 +15,7 @@ export interface Snapshot {
   label: string;
   muted: boolean;
   debug: string;
+  warn: string;      // something the user has to do, e.g. tap to wake the audio
 }
 
 type Listener = (s: Snapshot) => void;
@@ -61,6 +62,26 @@ const BARGE_IN_GRACE_MS = 500;
 // animation follow the words instead of just their loudness.
 const BANDS: [number, number][] = [[90, 300], [300, 900], [900, 2200], [2200, 6000]];
 
+// Past this the provider is not coming back: the relay gets the turn instead.
+const STT_DIRECT_TIMEOUT_MS = 15000;
+
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+// What the phone's audio stack does is invisible from the server, and "it
+// just keeps listening" has half a dozen possible causes. A few facts per
+// session go to the hub's journal instead: context state, the noise floor,
+// the loudest sound heard, what the transcription returned.
+function diag(event: string, data: Record<string, unknown> = {}) {
+  try {
+    fetch('/api/diag', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event, data }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch { /* diagnostics must never break the voice */ }
+}
+
 interface SttDirect {
   mode: string; wire: string; provider: string; model: string;
   base_url: string; api_key: string; language?: string;
@@ -84,7 +105,7 @@ export class VoiceEngine {
   volume = 0;
   onError: (msg: string) => void = () => {};
 
-  private snap: Snapshot = { state: 'off', label: '', muted: false, debug: '' };
+  private snap: Snapshot = { state: 'off', label: '', muted: false, debug: '', warn: '' };
   private listeners = new Set<Listener>();
 
   private audioCtx: AudioContext | null = null;
@@ -107,7 +128,11 @@ export class VoiceEngine {
 
   private noiseFloor = 5;
   private calibrating = true;
+  private calibStarted = false;
   private calibSamples: number[] = [];
+  private loudest = 0;            // since calibration, for the diagnostics
+  private noSignal = false;
+  private speechStarts = 0;
 
   // STT settings fetched once per session. Held in memory only — this carries
   // a provider credential and must never reach localStorage or a URL.
@@ -144,6 +169,25 @@ export class VoiceEngine {
   // ── session ─────────────────────────────────────────────────────
   async start() {
     if (this.active) return;
+    // The screen opens on the tap, not after the permission prompt: waiting
+    // for the microphone first looked like a button that did nothing.
+    this.calibrating = true;
+    this.calibStarted = false;
+    this.set({ muted: false, debug: '', warn: '' });
+    this.setState('calibrating', 'calibrazione...');
+
+    // iOS lets audio start only inside the tap that asked for it. The context
+    // used to be created after awaiting the microphone, and a permission
+    // prompt outlasts that window: the context stayed suspended, the analyser
+    // read pure silence, and the VAD never heard a word. So: create and resume
+    // it now, before anything is awaited.
+    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx: AudioContext = new Ctx();
+    const resumed = ctx.resume().catch(() => {});
+    this.audioCtx = ctx;
+    // Calls, Siri and other apps suspend it later on; a tap brings it back.
+    ctx.onstatechange = () => this.checkAudio();
+
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -157,26 +201,32 @@ export class VoiceEngine {
         video: false,
       });
     } catch (e: any) {
+      diag('mic-denied', { error: e.name, message: e.message });
+      ctx.close().catch(() => {});
+      this.audioCtx = null;
+      this.setState('off', '');
       this.onError('Microfono non disponibile: ' + e.message);
       return;
     }
+    if (!this.active || this.audioCtx !== ctx) {   // closed while the prompt was up
+      this.stream.getTracks().forEach(t => t.stop());
+      return;
+    }
+    await Promise.race([resumed, sleep(1000)]);
 
     // No custom sampleRate — let Safari use its native rate
-    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-    this.audioCtx = new Ctx();
-    if (this.audioCtx.state === 'suspended') await this.audioCtx.resume();
-    this.analyser = this.audioCtx.createAnalyser();
+    this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 1024;
     this.analyser.smoothingTimeConstant = 0.5;
-    this.audioCtx.createMediaStreamSource(this.stream).connect(this.analyser);
+    ctx.createMediaStreamSource(this.stream).connect(this.analyser);
     // Everything Hermes says passes through here on its way out, so the
     // animation can move with the actual sound of the reply.
-    this.outAnalyser = this.audioCtx.createAnalyser();
+    this.outAnalyser = ctx.createAnalyser();
     this.outAnalyser.fftSize = 1024;
     this.outAnalyser.smoothingTimeConstant = 0.55;
     this.outAnalyser.minDecibels = -85;
     this.outAnalyser.maxDecibels = -20;
-    this.outAnalyser.connect(this.audioCtx.destination);
+    this.outAnalyser.connect(ctx.destination);
 
     // Fire and forget: if it is slow or fails we simply use the relay.
     fetch('/api/voice-config')
@@ -193,13 +243,40 @@ export class VoiceEngine {
       })
       .catch(() => {});
 
-    this.calibrating = true;
+    const track = this.stream.getAudioTracks()[0];
+    diag('voice-start', {
+      ctx: ctx.state, rate: ctx.sampleRate, mime: getAudioMime(),
+      track: track ? { enabled: track.enabled, muted: track.muted, state: track.readyState } : null,
+    });
+    this.checkAudio();
+  }
+
+  /** A tap on the voice screen: the one thing iOS accepts to (re)start audio. */
+  wake() {
+    const ctx = this.audioCtx;
+    if (!ctx || ctx.state === 'running') return;
+    ctx.resume().then(() => this.checkAudio()).catch(() => {});
+  }
+
+  private checkAudio() {
+    const ctx = this.audioCtx;
+    if (!ctx || !this.active || !this.analyser) return;
+    if (ctx.state === 'running') {
+      if (this.snap.warn) this.set({ warn: '' });
+      if (!this.calibStarted) this.calibrate();
+    } else {
+      diag('audio-suspended', { ctx: ctx.state, voice: this.snap.state });
+      this.set({ warn: 'Tocca lo schermo per attivare il microfono' });
+    }
+  }
+
+  // Calibrate the noise floor for 1.5 seconds, on a running context only:
+  // measured on a suspended one it would be silence, and so would everything after.
+  private calibrate() {
+    this.noSignal = false;
+    this.calibStarted = true;
     this.calibSamples = [];
     this.calibBands = [];
-    this.set({ muted: false, debug: '' });
-    this.setState('calibrating', 'calibrazione...');
-
-    // Calibrate the noise floor for 1.5 seconds
     setTimeout(() => {
       if (!this.active) return;
       const s = this.calibSamples;
@@ -208,9 +285,33 @@ export class VoiceEngine {
       const n = this.calibBands.length || 1;
       this.micFloor = this.micFloor.map((_, b) =>
         Math.min(0.9, 1.15 * this.calibBands.reduce((a, x) => a + x[b], 0) / n + 0.03));
+      const peak = Math.max(0, ...s);
+      diag('calibrated', {
+        floor: +this.noiseFloor.toFixed(2), peak: +peak.toFixed(2), samples: s.length,
+        ctx: this.audioCtx?.state, startAt: +(this.noiseFloor * START_MULT).toFixed(2),
+      });
+      if (peak === 0) {
+        // Not one sample above absolute zero: no quiet room is that quiet.
+        this.noSignal = true;
+        this.set({ warn: 'Il microfono non dà segnale: tocca lo schermo' });
+      }
       this.calibrating = false;
+      this.loudest = 0;
+      this.speechStarts = 0;
       this.setState('listening', 'in ascolto');
       this.monitorLoop();
+      // Whether the VAD could have heard anything: the loudest sound against
+      // the bar a turn has to clear. Twice, then quiet.
+      for (const after of [10000, 30000]) {
+        setTimeout(() => {
+          if (!this.active) return;
+          diag('listening', {
+            after: after / 1000, loudest: +this.loudest.toFixed(2),
+            startAt: +(this.noiseFloor * START_MULT).toFixed(2), turns: this.speechStarts,
+            ctx: this.audioCtx?.state, muted: this.snap.muted,
+          });
+        }, after);
+      }
     }, 1500);
     this.monitorCalib();
   }
@@ -218,10 +319,12 @@ export class VoiceEngine {
   stop() {
     if (!this.active) return;
     this.setState('off', '');
+    this.set({ warn: '' });
     clearTimeout(this.silenceTimer);
     if (this.recorder && this.recorder.state !== 'inactive') this.recorder.stop();
     this.stream?.getTracks().forEach(t => t.stop());
-    this.audioCtx?.close();
+    this.audioCtx?.close().catch(() => {});
+    this.audioCtx = null;
     this.analyser = null;
     this.outAnalyser = null;
     if (this.currentAudio) { try { this.currentAudio.stop(); } catch { /* already ended */ } }
@@ -260,11 +363,13 @@ export class VoiceEngine {
   }
 
   // ── VAD ─────────────────────────────────────────────────────────
+  // Float samples, not bytes: at 8 bits anything under -42 dBFS reads as
+  // exactly zero, which made a quiet room indistinguishable from a dead mic.
   private getRMS() {
-    const d = new Uint8Array(this.analyser!.frequencyBinCount);
-    this.analyser!.getByteTimeDomainData(d);
+    const d = new Float32Array(this.analyser!.fftSize);
+    this.analyser!.getFloatTimeDomainData(d);
     let sum = 0;
-    for (let i = 0; i < d.length; i++) { const v = (d[i] - 128) / 128; sum += v * v; }
+    for (let i = 0; i < d.length; i++) sum += d[i] * d[i];
     return Math.sqrt(sum / d.length) * 100;
   }
 
@@ -313,6 +418,12 @@ export class VoiceEngine {
     if (!this.active || this.calibrating) return;
     const rms = this.getRMS();
     this.volume = this.volume * 0.75 + (rms / (this.noiseFloor * 8)) * 0.25;
+    if (rms > this.loudest) this.loudest = rms;
+    if (this.noSignal && rms > 0) {
+      this.noSignal = false;
+      diag('signal-back', { ctx: this.audioCtx?.state });
+      this.set({ warn: '' });
+    }
 
     const speaking = this.snap.state === 'speaking';
     const gateOpen = speaking
@@ -335,6 +446,7 @@ export class VoiceEngine {
   }
 
   private startRecording() {
+    this.speechStarts++;
     this.isSpeaking = true;
     this.chunks = [];
     this.speechStartedAt = performance.now();
@@ -361,6 +473,7 @@ export class VoiceEngine {
 
     this.isSpeaking = false;
     this.isProcessing = true;
+    diag('speech', { ms: Math.round(performance.now() - this.speechStartedAt) });
     this.mark0 = performance.now();
     this.marks = [];
     this.T('fine-voce');
@@ -389,6 +502,8 @@ export class VoiceEngine {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + stt.api_key },
       body: fd,
+      // From China the provider sometimes just hangs; the relay goes through the VPS.
+      signal: AbortSignal.timeout(STT_DIRECT_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const d = await res.json();
@@ -407,15 +522,19 @@ export class VoiceEngine {
   private async handleAudio(blob: Blob, mime: string) {
     try {
       const ext = mimeToExt(mime);
+      const t0 = performance.now();
       let text: string;
+      let via = 'relay';
       if (this.sttDirect) {
         try {
           text = await this.transcribeDirect(blob, ext);
+          via = 'direct';
           this.T('stt-diretto');
         } catch (e: any) {
           // A revoked key or a provider hiccup must not end the conversation:
           // drop to the relay for this turn and stop trying direct afterwards.
           console.warn('STT diretto fallito, passo al relay:', e.message);
+          diag('stt-direct-failed', { error: e.name, message: e.message });
           this.sttDirect = null;
           text = await this.transcribeRelay(blob, ext);
           this.T('stt-relay');
@@ -424,6 +543,7 @@ export class VoiceEngine {
         text = await this.transcribeRelay(blob, ext);
         this.T('stt');
       }
+      diag('stt', { via, ms: Math.round(performance.now() - t0), bytes: blob.size, chars: text.length });
       if (text.length < 2) return;   // silent or noise
       if (chat.snapshot.approval) {
         this.onError('Prima rispondi alla richiesta sullo schermo');
@@ -433,6 +553,7 @@ export class VoiceEngine {
       this.ttsInterrupted = false;
       await this.speakReply(onSentence => chat.send(text, { voice: true, onSentence }));
     } catch (e: any) {
+      diag('turn-error', { error: e.name, message: e.message });
       this.onError('Errore: ' + e.message);
       console.error(e);
     }

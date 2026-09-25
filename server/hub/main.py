@@ -7,6 +7,8 @@ channel's transcripts, and approvals answered from the phone.
 """
 import asyncio
 import base64
+import collections
+import json
 import re
 import time
 
@@ -108,6 +110,28 @@ async def transcribe(audio: UploadFile = File(None)):
     text = (result.get("transcript") or "").strip()
     print(f"[STT] {text!r} (provider={result.get('provider')})")
     return {"text": text}
+
+
+_diag_times = collections.deque(maxlen=60)
+
+
+@app.post("/api/diag")
+async def diag(request: Request):
+    """A few facts from the phone's voice engine, into the journal.
+
+    The phone's audio stack is invisible from here, and "it keeps listening
+    and never answers" has several causes that look the same on screen.
+    Capped per minute and per line: this must never be a way to fill the disk.
+    """
+    now = time.monotonic()
+    if len(_diag_times) == _diag_times.maxlen and now - _diag_times[0] < 60:
+        return {"ok": False}
+    _diag_times.append(now)
+    body = await request.json()
+    event = str(body.get("event") or "")[:40]
+    data = json.dumps(body.get("data") or {}, ensure_ascii=False)[:600]
+    print(f"[CLIENT] {event} {data}")
+    return {"ok": True}
 
 
 @app.post("/api/tts")

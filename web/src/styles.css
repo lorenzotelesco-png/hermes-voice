@@ -409,6 +409,8 @@ body::after {
   color: rgba(255, 255, 255, .28);
 }
 
+.voice-sub.is-warn { color: #ffd27a; letter-spacing: .02em; }
+
 .voice-controls {
   position: absolute; bottom: calc(34px + env(safe-area-inset-bottom));
   display: flex; align-items: center; gap: 28px;
