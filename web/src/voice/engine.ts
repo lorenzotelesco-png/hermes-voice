@@ -131,6 +131,7 @@ export class VoiceEngine {
   private calibStarted = false;
   private calibSamples: number[] = [];
   private loudest = 0;            // since calibration, for the diagnostics
+  private noSignal = false;
   private speechStarts = 0;
 
   // STT settings fetched once per session. Held in memory only — this carries
@@ -272,6 +273,7 @@ export class VoiceEngine {
   // Calibrate the noise floor for 1.5 seconds, on a running context only:
   // measured on a suspended one it would be silence, and so would everything after.
   private calibrate() {
+    this.noSignal = false;
     this.calibStarted = true;
     this.calibSamples = [];
     this.calibBands = [];
@@ -290,6 +292,7 @@ export class VoiceEngine {
       });
       if (peak === 0) {
         // Not one sample above absolute zero: no quiet room is that quiet.
+        this.noSignal = true;
         this.set({ warn: 'Il microfono non dà segnale: tocca lo schermo' });
       }
       this.calibrating = false;
@@ -360,11 +363,13 @@ export class VoiceEngine {
   }
 
   // ── VAD ─────────────────────────────────────────────────────────
+  // Float samples, not bytes: at 8 bits anything under -42 dBFS reads as
+  // exactly zero, which made a quiet room indistinguishable from a dead mic.
   private getRMS() {
-    const d = new Uint8Array(this.analyser!.frequencyBinCount);
-    this.analyser!.getByteTimeDomainData(d);
+    const d = new Float32Array(this.analyser!.fftSize);
+    this.analyser!.getFloatTimeDomainData(d);
     let sum = 0;
-    for (let i = 0; i < d.length; i++) { const v = (d[i] - 128) / 128; sum += v * v; }
+    for (let i = 0; i < d.length; i++) sum += d[i] * d[i];
     return Math.sqrt(sum / d.length) * 100;
   }
 
@@ -414,6 +419,11 @@ export class VoiceEngine {
     const rms = this.getRMS();
     this.volume = this.volume * 0.75 + (rms / (this.noiseFloor * 8)) * 0.25;
     if (rms > this.loudest) this.loudest = rms;
+    if (this.noSignal && rms > 0) {
+      this.noSignal = false;
+      diag('signal-back', { ctx: this.audioCtx?.state });
+      this.set({ warn: '' });
+    }
 
     const speaking = this.snap.state === 'speaking';
     const gateOpen = speaking
