@@ -134,16 +134,21 @@ export function VoiceStage() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  const sub = snap.muted ? 'microfono spento'
+  const sub = snap.warn ? snap.warn
+    : snap.muted ? 'microfono spento'
     : snap.state === 'speaking' ? 'tocca per interrompere'
     : snap.state === 'thinking' && tool ? [toolLabel(tool.name), tool.preview].filter(Boolean).join(' · ')
     : '';
 
   return (
-    // A tap anywhere while Hermes speaks cuts the reply short.
+    // A tap anywhere wakes the audio if iOS suspended it, and while Hermes
+    // speaks cuts the reply short.
     <div ref={stageRef} class={`voice-stage is-${snap.state}${snap.muted ? ' is-muted' : ''}`}
          role="dialog" aria-label="Conversazione a voce"
-         onClick={() => { if (voice.snapshot.state === 'speaking') voice.interrupt(); }}>
+         onClick={() => {
+           voice.wake();
+           if (voice.snapshot.state === 'speaking') voice.interrupt();
+         }}>
       {DEBUG && snap.debug && <div class="debug">{snap.debug}</div>}
       <div class="blobs">
         {PHASES.map((_, i) => (
@@ -151,7 +156,7 @@ export function VoiceStage() {
         ))}
       </div>
       <div class="voice-label">{LABELS[snap.state] || snap.label}</div>
-      <div class="voice-sub">{sub}</div>
+      <div class={`voice-sub${snap.warn ? ' is-warn' : ''}`}>{sub}</div>
       <div class="voice-controls" onClick={e => e.stopPropagation()}>
         <button class={`ctrl ctrl-mute${snap.muted ? ' is-muted' : ''}`}
                 title={snap.muted ? 'Riattiva il microfono' : 'Spegni il microfono'}

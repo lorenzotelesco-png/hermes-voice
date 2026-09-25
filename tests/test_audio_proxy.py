@@ -2,6 +2,7 @@
 import base64
 
 import _setup
+from _setup import anon_client
 import httpx
 
 seen = {}
@@ -70,6 +71,21 @@ _setup.mock(down)
 j = c.get("/api/voice-config").json()
 print("voice-config con dashboard giu':", j["stt"]["mode"])
 assert j["stt"]["mode"] == "relay", j
+
+# --- diagnostics from the phone: into the journal, capped ---
+import contextlib, io  # noqa: E402
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    r = c.post("/api/diag", json={"event": "calibrated", "data": {"floor": 3.1, "peak": 0}})
+    assert r.json() == {"ok": True}, r.text
+    c.post("/api/diag", json={"event": "x" * 500, "data": {"blob": "y" * 5000}})
+    oks = [c.post("/api/diag", json={"event": "flood"}).json()["ok"] for _ in range(80)]
+lines = out.getvalue().splitlines()
+assert '[CLIENT] calibrated {"floor": 3.1, "peak": 0}' in lines, lines[:2]
+assert all(len(l) < 700 for l in lines), "a diagnostic line was not capped"
+assert oks.count(True) == 58 and not oks[-1], oks.count(True)
+assert anon_client().post("/api/diag", json={"event": "x"}).status_code == 401
+print("diagnostica: nel journal, righe limitate, massimo 60 al minuto, solo con accesso  OK")
 
 print()
 print("OK: proxy transcribe/tts, auth header, 401 e 503 distinti, voice-config")
