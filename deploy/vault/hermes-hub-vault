@@ -1,0 +1,625 @@
+#!/usr/bin/python3
+"""Root side of the phone's access to the Obsidian vault: one request per connection.
+
+The vault is /root/obsidian-vault, owned by root and read by Hermes; GitHub
+keeps it in step with Obsidian on the PC. The hub runs unprivileged and cannot
+see /root, so this script reads and writes for it. systemd starts it as root
+for each connection (hermes-hub-vault.socket, Accept=yes) in a sandbox where
+the vault is the only writable place, and it answers only the hermes-hub user.
+
+Every change is a git commit pushed to GitHub, so history is the undo, and no
+change overwrites work it has not seen:
+
+  - a note saved from an older version than the one on disk is merged when
+    the two edits do not overlap, and otherwise handed back as a conflict for
+    the phone to show; nothing is written until the person chooses;
+  - when GitHub moves under a save and the edits collide, both versions stay:
+    GitHub's at the note's path, the phone's in a "(conflitto telefono ...)"
+    copy next to it. Nothing is forced, reset away or pushed with --force.
+
+    {"action": "index"}
+    {"action": "read", "path": "Daily/2026-09-25.md"}
+    {"action": "raw", "path": "Allegati/foto.jpg"}
+    {"action": "search", "q": "hermes"}
+    {"action": "status"}          {"action": "sync"}
+    {"action": "save", "path": "Idee.md", "text": "...", "base": "<blob sha>" | null}
+    {"action": "upload", "name": "foto.jpg", "data": "<base64>"}
+    {"action": "capture", "text": "...", "date": "2026-09-25", "time": "19:30"}
+
+Installed by deploy/deploy.sh to /usr/local/libexec/hermes-hub-vault from the
+commit fetched from GitHub, never from the working tree the hub can write.
+"""
+import base64
+import datetime
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import unicodedata
+
+try:
+    import fcntl
+except ImportError:          # the tests run it on Windows, one request at a time
+    fcntl = None
+
+VAULT = "/root/obsidian-vault"
+CALLER = "hermes-hub"
+MAX_REQUEST = 24 * 2**20
+MAX_TEXT = 2 * 2**20
+MAX_RAW = 15 * 2**20
+TEXT_EXT = {".md", ".txt", ".canvas", ".csv", ".json"}
+SAVE_EXT = {".md", ".txt"}
+# No SVG: served from the hub's own origin it could run script.
+RAW_TYPES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+    ".webp": "image/webp", ".heic": "image/heic", ".pdf": "application/pdf",
+}
+ATTACHMENTS = "Allegati"
+DAILY_DIR, DAILY_TEMPLATE, CAPTURE_SECTION = "Daily", "Templates/Daily.md", "Note libere"
+IDENTITY = ["-c", "user.name=Hermes Hub", "-c", "user.email=hub@hermes-hub.invalid", "-c", "core.quotePath=false"]
+SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+class Refused(Exception):
+    """Something the phone asked that will not be done; the message is shown as is."""
+
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.status = status
+
+
+# ── git ───────────────────────────────────────────────────────────
+def git(*args, timeout=30, check=True, binary=False):
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", LC_ALL="C")
+    r = subprocess.run(["git", *IDENTITY, *args], cwd=VAULT, capture_output=True, timeout=timeout,
+                       env=env, encoding=None if binary else "utf-8", errors=None if binary else "replace")
+    if check and r.returncode != 0:
+        err = r.stderr if isinstance(r.stderr, str) else r.stderr.decode("utf-8", "replace")
+        raise Refused(f"git {args[0]}: {err.strip()[:300]}", status=502)
+    return r
+
+
+def blob_sha(data):
+    """git's own id for these bytes, so a base the phone sends can be looked up in history."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def counts():
+    """(ahead, behind) of the current branch against what was last fetched."""
+    r = git("rev-list", "--left-right", "--count", "HEAD...@{u}", check=False)
+    if r.returncode != 0:
+        return 0, 0
+    ahead, behind = r.stdout.split()
+    return int(ahead), int(behind)
+
+
+def fetch():
+    r = git("fetch", "-q", "origin", timeout=40, check=False)
+    return r.returncode == 0
+
+
+def integrate():
+    """Bring in what GitHub has. Returns the conflict copies made, if any."""
+    ahead, behind = counts()
+    if not behind:
+        return []
+    if not ahead:
+        r = git("merge", "--ff-only", "-q", "@{u}", check=False)
+    else:
+        # Local commits not yet on GitHub: a merge, like Obsidian Git on the PC
+        # does. Unlike a rebase it works with Hermes' uncommitted files around.
+        r = git("merge", "--no-edit", "-q", "@{u}", check=False)
+    if r.returncode == 0:
+        return []
+    if os.path.exists(os.path.join(VAULT, ".git", "MERGE_HEAD")):
+        git("merge", "--abort", check=False)
+        return salvage()
+    # Refused before starting: an uncommitted change on the server (Hermes
+    # writing a note) touches a file GitHub also changed. Not ours to settle.
+    raise Refused("GitHub ha modifiche a file cambiati anche sul server e non ancora salvati "
+                  "(da Hermes?): vanno sistemati sul server. " + r.stderr.strip()[:200], status=409)
+
+
+def salvage():
+    """Our unpushed commits collide with GitHub's. Follow GitHub, keep ours beside it.
+
+    Files only we changed go back where they were; files both sides changed
+    keep GitHub's version at the path and ours in a conflict copy.
+    """
+    before = git("rev-parse", "HEAD").stdout.strip()
+    ours = git("diff", "--name-only", "-z", "@{u}...HEAD").stdout.split("\0")
+    theirs = set(git("diff", "--name-only", "-z", "HEAD...@{u}").stdout.split("\0"))
+    saved = {}
+    for path in filter(None, ours):
+        r = git("show", f"HEAD:{path}", check=False, binary=True)
+        if r.returncode == 0:
+            saved[path] = r.stdout
+    # --keep refuses rather than touch uncommitted work in the files it moves.
+    git("reset", "-q", "--keep", "@{u}")
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H%M")
+    copies, changed = [], []
+    for path, data in saved.items():
+        if path in theirs:
+            stem, ext = os.path.splitext(path)
+            path = unique(f"{stem} (conflitto telefono {stamp}){ext}", hidden=True)
+            copies.append(path)
+        write(path, data, hidden=True)
+        changed.append(path)
+    if changed:
+        git("add", "--", *changed)
+        # The old commit stays reachable by its id (and in the reflog) either way.
+        git("commit", "-q", "-m", f"Hub: versioni in conflitto con GitHub, salvate a parte (da {before[:10]})",
+            "--", *changed)
+    return copies
+
+
+def push():
+    """(pushed, error, conflict copies). One retry when GitHub moved on meanwhile."""
+    if not counts()[0]:
+        return True, None, []
+    r = git("push", "-q", "origin", "HEAD", timeout=60, check=False)
+    if r.returncode == 0:
+        return True, None, []
+    copies = []
+    if fetch():
+        copies = integrate()
+        r = git("push", "-q", "origin", "HEAD", timeout=60, check=False)
+        if r.returncode == 0:
+            return True, None, copies
+    return False, r.stderr.strip()[:300], copies
+
+
+def commit(paths, message):
+    git("add", "--", *paths)
+    # Only these paths: whatever else is uncommitted on the server stays as it is.
+    git("commit", "-q", "-m", message, "--", *paths)
+
+
+class Lock:
+    """One writer at a time; git's own index.lock covers Hermes and manual pulls."""
+
+    def __enter__(self):
+        self.fh = open(os.path.join(VAULT, ".git", "hub.lock"), "w")
+        if fcntl:
+            deadline = time.monotonic() + 45
+            while True:
+                try:
+                    fcntl.flock(self.fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() > deadline:
+                        raise Refused("il vault è occupato da un altro salvataggio, riprova", status=503)
+                    time.sleep(0.2)
+        return self
+
+    def __exit__(self, *exc):
+        self.fh.close()
+
+
+# ── paths ─────────────────────────────────────────────────────────
+def resolve(rel, must_exist=True, hidden=False):
+    """Absolute path of a vault-relative one, or Refused. Hidden parts (.git,
+    .obsidian) and anything that leads out of the vault, symlinks included, are
+    refused; `hidden` lets the conflict salvage put back files git itself named."""
+    if not isinstance(rel, str) or not rel or len(rel) > 400 or "\0" in rel or "\\" in rel:
+        raise Refused("percorso non valido")
+    parts = rel.split("/")
+    if any(p in ("", ".", "..", ".git") or (p.startswith(".") and not hidden) for p in parts):
+        raise Refused("percorso non valido")
+    root = os.path.realpath(VAULT)
+    full = os.path.join(root, *parts)
+    real = os.path.realpath(full)
+    if not real.startswith(root + os.sep):
+        raise Refused("fuori dal vault", status=403)
+    if must_exist and not os.path.isfile(real):
+        raise Refused("il file non esiste", status=404)
+    return real
+
+
+def write(rel, data, hidden=False):
+    real = resolve(rel, must_exist=False, hidden=hidden)
+    if os.path.islink(os.path.join(VAULT, *rel.split("/"))):
+        raise Refused("è un collegamento simbolico", status=403)
+    os.makedirs(os.path.dirname(real), exist_ok=True)
+    tmp = os.path.join(os.path.dirname(real), f".{os.path.basename(real)}.hub-tmp")
+    with open(tmp, "wb") as fh:
+        fh.write(data)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, real)
+
+
+def unique(rel, hidden=False):
+    stem, ext = os.path.splitext(rel)
+    candidate, n = rel, 1
+    while os.path.exists(resolve(candidate, must_exist=False, hidden=hidden)):
+        candidate = f"{stem} {n}{ext}"
+        n += 1
+    return candidate
+
+
+def settings(name):
+    try:
+        with open(os.path.join(VAULT, ".obsidian", name), encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def attachment_dir():
+    # Obsidian's own setting when it names a folder; "/" (vault root) and "./"
+    # (next to the note) would scatter phone photos, so those get Allegati.
+    folder = settings("app.json").get("attachmentFolderPath")
+    if isinstance(folder, str) and folder.strip("/") and not folder.startswith("."):
+        return folder.strip("/")
+    return ATTACHMENTS
+
+
+def daily_settings():
+    """(folder, template) of the daily note, from Periodic Notes or the core plugin."""
+    try:
+        day = settings("plugins/periodic-notes/data.json")["calendarSets"][0]["day"]
+        if day.get("enabled"):
+            return (day.get("folder") or "").strip("/"), day.get("templatePath") or ""
+    except (KeyError, IndexError, TypeError):
+        pass
+    core = settings("daily-notes.json")
+    if core:
+        return (core.get("folder") or "").strip("/"), core.get("template") or ""
+    return DAILY_DIR, DAILY_TEMPLATE
+
+
+# ── actions ───────────────────────────────────────────────────────
+def last_changes():
+    """path -> time of the last commit that touched it. File times say when a
+    pull wrote the file, not when anyone changed it."""
+    r = git("log", "-n", "1000", "--format=@%ct", "--name-only", check=False)
+    changed, when = {}, None
+    for line in r.stdout.splitlines() if r.returncode == 0 else []:
+        if line.startswith("@"):
+            when = int(line[1:])
+        elif line and when:
+            changed.setdefault(line, when)
+    return changed
+
+
+def do_index(req):
+    files, dirs = [], []
+    changed = last_changes()
+    root = os.path.realpath(VAULT)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".")
+                             and not os.path.islink(os.path.join(dirpath, d)))
+        rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
+        if rel_dir != ".":
+            dirs.append(rel_dir)
+        for name in filenames:
+            full = os.path.join(dirpath, name)
+            if name.startswith(".") or os.path.islink(full):
+                continue
+            st = os.stat(full)
+            rel = os.path.relpath(full, root).replace(os.sep, "/")
+            files.append({"path": rel, "size": st.st_size, "mtime": int(st.st_mtime),
+                          "changed": changed.get(rel, int(st.st_mtime))})
+    files.sort(key=lambda f: f["path"].lower())
+    return {"files": files, "dirs": dirs, "attachments": attachment_dir()}
+
+
+def do_read(req):
+    rel = req.get("path")
+    real = resolve(rel)
+    if os.path.splitext(real)[1].lower() not in TEXT_EXT:
+        raise Refused("non è un file di testo")
+    if os.path.getsize(real) > MAX_TEXT:
+        raise Refused("file troppo grande da aprire sul telefono", status=413)
+    with open(real, "rb") as fh:
+        data = fh.read()
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise Refused("il file non è testo UTF-8")
+    return {"path": rel, "text": text, "sha": blob_sha(data), "mtime": int(os.path.getmtime(real))}
+
+
+def do_raw(req):
+    real = resolve(req.get("path"))
+    mime = RAW_TYPES.get(os.path.splitext(real)[1].lower())
+    if not mime:
+        raise Refused("tipo di file non mostrato dall'app")
+    if os.path.getsize(real) > MAX_RAW:
+        raise Refused("file troppo grande", status=413)
+    with open(real, "rb") as fh:
+        return {"mime": mime, "data": base64.b64encode(fh.read()).decode("ascii")}
+
+
+def fold(s):
+    """Lowercase without accents: "perché" finds "perche" and the other way round."""
+    return "".join(c for c in unicodedata.normalize("NFKD", s.casefold()) if not unicodedata.combining(c))
+
+
+def do_search(req):
+    q = str(req.get("q") or "").strip()
+    words = fold(q).split()
+    if len(q) < 2 or not words:
+        raise Refused("scrivi almeno due lettere")
+    results = []
+    for f in do_index({})["files"]:
+        path = f["path"]
+        if os.path.splitext(path)[1].lower() not in (".md", ".txt", ".canvas") or f["size"] > MAX_TEXT:
+            continue
+        try:
+            with open(os.path.join(VAULT, *path.split("/")), encoding="utf-8") as fh:
+                text = fh.read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        name, body = fold(path), fold(text)
+        if not all(w in name or w in body for w in words):
+            continue
+        hits = []
+        lines = text.splitlines()
+        # Frontmatter counts for matching (tags) but makes a poor preview.
+        skip = next((i + 1 for i, l in enumerate(lines[1:], 1) if l.strip() == "---"), 0) \
+            if lines and lines[0].strip() == "---" else 0
+        for n, line in enumerate(lines, 1):
+            if n <= skip:
+                continue
+            folded = fold(line)
+            at = min((folded.find(w) for w in words if w in folded), default=-1)
+            if at >= 0:
+                start = max(0, at - 50)
+                hits.append({"line": n, "text": ("…" if start else "") + line[start:start + 150].strip()})
+        in_name = sum(w in name for w in words)
+        exact = fold(os.path.splitext(path.rsplit("/", 1)[-1])[0]) == " ".join(words)
+        score = exact * 1000 + in_name * 100 + len(hits)
+        results.append((score, {"path": path, "in_name": bool(in_name), "count": len(hits), "hits": hits[:3]}))
+    # Best first; among equals the shorter path, usually the note itself rather than its copies.
+    results.sort(key=lambda r: (-r[0], len(r[1]["path"])))
+    return {"results": [r for _, r in results[:40]], "total": len(results)}
+
+
+def do_status(req):
+    ahead, behind = counts()
+    last = git("log", "-1", "--format=%h%x00%ct%x00%an%x00%s").stdout.strip().split("\0")
+    dirty = [line[3:] for line in git("status", "--porcelain").stdout.splitlines()]
+    head = os.path.join(VAULT, ".git", "FETCH_HEAD")
+    return {
+        "branch": git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip(),
+        "ahead": ahead, "behind": behind,
+        "dirty": [d for d in dirty if not d.strip('"').startswith(".")][:20],
+        "last": dict(zip(("hash", "time", "author", "subject"), last)) if len(last) == 4 else None,
+        "fetched_at": int(os.path.getmtime(head)) if os.path.exists(head) else None,
+    }
+
+
+def do_sync(req):
+    with Lock():
+        online = fetch()
+        copies = integrate() if online else []
+        pushed, err, more = push() if online else (False, "GitHub non raggiungibile", [])
+    return {**do_status(req), "online": online, "pushed": pushed, "push_error": err, "copies": copies + more}
+
+
+def merge3(mine, base_sha, theirs):
+    """Three-way merge of the phone's text with the disk's, from their common base.
+    None when the base is unknown or the edits overlap."""
+    base = git("cat-file", "blob", base_sha, check=False, binary=True)
+    if base.returncode != 0:
+        return None
+    tmp = tempfile.mkdtemp(prefix="hub-merge-")
+    try:
+        names = []
+        for label, data in (("mine", mine), ("base", base.stdout), ("theirs", theirs)):
+            names.append(os.path.join(tmp, label))
+            with open(names[-1], "wb") as fh:
+                fh.write(data)
+        r = git("merge-file", "-p", *names, check=False, binary=True)
+        return r.stdout if r.returncode == 0 else None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def do_save(req):
+    rel, text, base = req.get("path"), req.get("text"), req.get("base")
+    if not isinstance(text, str):
+        raise Refused("testo mancante")
+    if os.path.splitext(str(rel))[1].lower() not in SAVE_EXT:
+        raise Refused("dall'app si salvano solo note .md e .txt")
+    if base is not None and not (isinstance(base, str) and SHA.match(base)):
+        raise Refused("versione di partenza non valida")
+    data = text.encode("utf-8")
+    if len(data) > MAX_TEXT:
+        raise Refused("nota troppo grande", status=413)
+
+    with Lock():
+        online = fetch()
+        copies = integrate() if online else []
+        real = resolve(rel, must_exist=False)
+        current = None
+        if os.path.isfile(real):
+            with open(real, "rb") as fh:
+                current = fh.read()
+
+        merged = False
+        if (base is None) != (current is None) or (base and blob_sha(current) != base):
+            # The disk moved on since the phone opened the note (or a "new" note
+            # already exists, or the note went away).
+            combined = merge3(data, base, current) if base and current is not None else None
+            if combined is None:
+                return {"ok": False, "conflict": True, "status": 409,
+                        "error": "la nota è cambiata altrove mentre la modificavi",
+                        "theirs": current.decode("utf-8", "replace") if current is not None else None,
+                        "theirs_sha": blob_sha(current) if current is not None else None}
+            data, merged = combined, True
+
+        if current != data:
+            write(rel, data)
+            commit([rel], f"Hub: {'nuova nota' if current is None else 'modifica'} {rel}")
+        pushed, err, more = push() if online else (False, "GitHub non raggiungibile: invio al prossimo salvataggio", [])
+    copies += more
+    return {"path": rel, "sha": blob_sha(data), "merged": merged,
+            "text": data.decode("utf-8") if merged else None,
+            "pushed": pushed, "push_error": err, "copies": copies}
+
+
+def clean_name(name):
+    name = re.split(r"[\\/]", str(name or ""))[-1].strip()
+    stem, ext = os.path.splitext(name)
+    stem = re.sub(r"[^\w\s\-.()]+", "-", stem).strip(" .-")[:80]
+    ext = ext.lower()
+    if not stem or ext not in RAW_TYPES:
+        raise Refused("si caricano solo foto (jpg, png, gif, webp, heic) e PDF")
+    return stem + ext
+
+
+def do_upload(req):
+    name = clean_name(req.get("name"))
+    try:
+        data = base64.b64decode(req.get("data") or "", validate=True)
+    except (ValueError, TypeError):
+        raise Refused("file non valido")
+    if not data:
+        raise Refused("file vuoto")
+    if len(data) > MAX_RAW:
+        raise Refused("file troppo grande (massimo 15 MB)", status=413)
+    with Lock():
+        online = fetch()
+        copies = integrate() if online else []
+        rel = unique(f"{attachment_dir()}/{name}")
+        write(rel, data)
+        commit([rel], f"Hub: allegato {rel}")
+        pushed, err, more = push() if online else (False, "GitHub non raggiungibile", [])
+    return {"path": rel, "name": rel.rsplit("/", 1)[-1], "pushed": pushed, "push_error": err, "copies": copies + more}
+
+
+def from_template(template, date):
+    try:
+        with open(resolve(template), encoding="utf-8") as fh:
+            text = fh.read()
+    except (Refused, OSError, UnicodeDecodeError):
+        return f"# {date}\n"
+    # Templater's date and the core plugin's {{date}}; any other Templater tag
+    # needs Obsidian to run it, so it is dropped rather than left as code.
+    text = re.sub(r"<%[^%]*tp\.date\.now\(\s*[\"']YYYY-MM-DD[\"']\s*\)[^%]*%>", date, text)
+    text = re.sub(r"\{\{\s*(date|title)\s*\}\}", date, text)
+    return re.sub(r"<%.*?%>", "", text, flags=re.S)
+
+
+def add_capture(text, entry):
+    """The entry at the end of the "Note libere" section, or a new section at the end."""
+    lines = text.split("\n")
+    head = next((i for i, l in enumerate(lines)
+                 if re.match(rf"^#{{1,6}}\s+{re.escape(CAPTURE_SECTION)}\s*$", l.strip(), re.I)), None)
+    if head is None:
+        return text.rstrip("\n") + f"\n\n## {CAPTURE_SECTION}\n" + "\n".join(entry) + "\n"
+    end = next((j for j in range(head + 1, len(lines))
+                if re.match(r"^#{1,6}\s", lines[j]) or lines[j].strip() == "---"), len(lines))
+    last = max([head] + [j for j in range(head + 1, end) if lines[j].strip()])
+    after = lines[last + 1:]
+    if last + 1 == end and end < len(lines):
+        after = [""] + after       # keep a blank line before the next block
+    return "\n".join(lines[:last + 1] + entry + after)
+
+
+def do_capture(req):
+    text = str(req.get("text") or "").strip()
+    date, clock = str(req.get("date") or ""), str(req.get("time") or "")
+    if not text:
+        raise Refused("niente da scrivere")
+    if len(text) > 4000:
+        raise Refused("troppo lungo per una nota rapida")
+    try:
+        datetime.date.fromisoformat(date)
+        datetime.datetime.strptime(clock, "%H:%M")
+    except ValueError:
+        raise Refused("data o ora non valide")
+    first, *rest = [l.rstrip() for l in text.splitlines()]
+    entry = [f"- {clock} {first}"] + [f"  {l}" if l else "" for l in rest]
+
+    with Lock():
+        online = fetch()
+        copies = integrate() if online else []
+        folder, template = daily_settings()
+        rel = f"{folder}/{date}.md" if folder else f"{date}.md"
+        real = resolve(rel, must_exist=False)
+        if os.path.isfile(real):
+            with open(real, encoding="utf-8") as fh:
+                note = fh.read()
+            created = False
+        else:
+            note, created = from_template(template, date), True
+        write(rel, add_capture(note, entry).encode("utf-8"))
+        commit([rel], f"Hub: nota rapida in {rel}")
+        pushed, err, more = push() if online else (False, "GitHub non raggiungibile", [])
+    return {"path": rel, "created": created, "pushed": pushed, "push_error": err, "copies": copies + more}
+
+
+ACTIONS = {
+    "index": do_index, "read": do_read, "raw": do_raw, "search": do_search, "status": do_status,
+    "sync": do_sync, "save": do_save, "upload": do_upload, "capture": do_capture,
+}
+
+
+def handle(req):
+    """One request in, one answer out; never raises."""
+    action = req.get("action") if isinstance(req, dict) else None
+    fn = ACTIONS.get(action)
+    if not fn:
+        return {"ok": False, "error": f"{action} not allowed", "status": 403}
+    try:
+        answer = fn(req)
+    except Refused as e:
+        return {"ok": False, "error": str(e), "status": e.status}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "git non ha risposto in tempo (GitHub lento?)", "status": 504}
+    except OSError as e:
+        return {"ok": False, "error": f"errore sul disco: {e.strerror or e}", "status": 500}
+    answer.setdefault("ok", True)
+    return answer
+
+
+# ── socket ────────────────────────────────────────────────────────
+def main():
+    import pwd
+    import socket
+    import struct
+
+    sock = socket.socket(fileno=sys.stdin.fileno())
+
+    def reply(payload):
+        sock.sendall((json.dumps(payload) + "\n").encode())
+
+    uid = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))[1]
+    if uid != pwd.getpwnam(CALLER).pw_uid:
+        return reply({"ok": False, "error": "caller not allowed", "status": 403})
+
+    sock.settimeout(20)
+    chunks, size = [], 0
+    while True:
+        chunk = sock.recv(1 << 16)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+        if chunk.endswith(b"\n") or size > MAX_REQUEST:
+            break
+    if size > MAX_REQUEST:
+        return reply({"ok": False, "error": "richiesta troppo grande", "status": 413})
+    try:
+        req = json.loads(b"".join(chunks))
+    except ValueError:
+        return reply({"ok": False, "error": "bad request", "status": 400})
+
+    answer = handle(req)
+    if req.get("action") in ("save", "upload", "capture", "sync"):
+        print(f"{req.get('action')} {req.get('path') or req.get('name') or req.get('date') or ''}: "
+              f"{'ok' if answer.get('ok') else answer.get('error')}"
+              f"{'' if answer.get('pushed', True) else ' (non inviato)'}", file=sys.stderr)
+    reply(answer)
+
+
+if __name__ == "__main__":
+    main()

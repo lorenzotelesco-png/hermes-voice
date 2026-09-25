@@ -1,0 +1,13 @@
+[Unit]
+Description=Hermes Hub vault access (root side, see deploy/vault/hermes-hub-vault)
+
+[Socket]
+ListenStream=/run/hermes-hub-vault.sock
+SocketUser=root
+SocketGroup=hermes-hub
+SocketMode=0660
+Accept=yes
+MaxConnections=8
+
+[Install]
+WantedBy=sockets.target

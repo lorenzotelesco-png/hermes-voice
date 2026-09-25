@@ -95,12 +95,12 @@ interface SttDirect {
   base_url: string; api_key: string; language?: string;
 }
 
-function getAudioMime() {
+export function getAudioMime() {
   const types = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', ''];
   return types.find(t => !t || MediaRecorder.isTypeSupported(t)) || '';
 }
 
-function mimeToExt(mime: string) {
+export function mimeToExt(mime: string) {
   if (!mime) return '.webm';
   if (mime.includes('mp4')) return '.m4a';
   if (mime.includes('ogg')) return '.ogg';

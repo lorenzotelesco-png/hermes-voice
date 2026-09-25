@@ -46,6 +46,12 @@ Works as a PWA from iPhone Safari over HTTPS.
 - **Push alerts** — a service down for 2 minutes, restarts by systemd (OOM
   named), disk over 85%, RAM under 300 MB, failed cron runs. They go through
   Apple's push service, so an alert that the tunnel is down still arrives.
+- **File tab** — the Obsidian vault on the phone: notes rendered with working
+  `[[links]]` and embedded images, edited and saved, searched (accents and case
+  ignored), photos and PDFs uploaded into `Allegati`, and a quick line into
+  today's daily note, typed or dictated. Every change is a git commit pushed to
+  GitHub, so Obsidian on the PC gets it on its next pull. Hermes' code and logs
+  are there too, read-only.
 - **iOS Safari compatible** — AudioContext unlock, correct `audio/mp4` MIME handling
 - **App shell with tabs** — Chat, Server, File, Altro; a voice session or a
   running turn keeps going while you look at another tab
@@ -138,6 +144,29 @@ and after `hermes update`.
 - **Alerts** are checked every 30 s by the hub itself, whether or not the app is
   open, and sent once when a problem starts and once when it ends. The first
   look after a restart of the hub only sets a baseline.
+
+### The File tab and the vault
+
+- **The vault is root's**, in `/root/obsidian-vault`, read by Hermes and kept in
+  step with the PC through GitHub. A second helper,
+  `hermes-hub-vault.socket` → `/usr/local/libexec/hermes-hub-vault`, reads and
+  writes it for the hub, as root but sandboxed so the vault is the only place it
+  can write; it answers only the `hermes-hub` user. The service helper cannot
+  see `/root` at all.
+- **Git is the undo.** Every save, upload and quick note is a commit by "Hermes
+  Hub" with only that file, pushed to GitHub. Before writing, the helper pulls:
+  a note saved from an older version than the one now on disk is merged when
+  the edits touch different lines, and otherwise comes back to the phone as a
+  conflict with the other version, and nothing is written until you choose
+  (keep yours as a copy, replace, or go back to editing). If GitHub moves in the
+  seconds between the pull and the push, both versions stay: GitHub's at the
+  note's path, the phone's in a `(conflitto telefono …)` copy. Nothing is
+  forced, reset away or force-pushed. Opening the tab pulls too, at most once a
+  minute, so Hermes' copy stays current as well.
+- **Edits survive the app closing**: the draft is kept on the phone until saved.
+- **Hermes' code and logs** are read through the dashboard, which runs as root:
+  the hub asks it only for paths under `FILE_ROOTS` and drops anything that
+  resolves outside them.
 - **Push on iPhone** needs the app opened from the home screen (iOS 16.4+):
   Server › Notifiche › "Avvisi sul telefono". The sender is written on top of
   `cryptography` (no pywebpush) and tested byte for byte against RFC 8291's

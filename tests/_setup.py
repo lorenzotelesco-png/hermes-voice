@@ -22,6 +22,7 @@ os.environ.update({
     "HUB_WEB_DIST": os.path.join(TMP, "dist"),
     "HUB_MONITOR": "0",
     "HUB_CONTROL_SOCKET": os.path.join(TMP, "control.sock"),
+    "HUB_VAULT_SOCKET": os.path.join(TMP, "vault.sock"),
 })
 
 import httpx  # noqa: E402
