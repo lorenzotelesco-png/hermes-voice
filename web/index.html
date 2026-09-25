@@ -253,7 +253,12 @@
       from { opacity: 0; transform: translateY(-8px) scale(.97); }
       to   { opacity: 1; transform: translateY(0) scale(1); }
     }
-  </style>
+  #debug{position:fixed;left:0;right:0;bottom:0;z-index:99;
+  font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
+  color:#8ab4ff;background:rgba(0,0,0,.55);padding:4px 6px;
+  text-align:center;letter-spacing:.02em;pointer-events:none;white-space:pre-wrap}
+#debug:empty{display:none}
+</style>
 </head>
 <body>
 
@@ -288,6 +293,7 @@
   </div>
 </div>
 
+<div id="debug"></div>
 <script src="app.js"></script>
 </body>
 </html>
