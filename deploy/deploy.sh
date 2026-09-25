@@ -11,6 +11,9 @@ cd "$APP"
 as_hub git fetch -q origin
 as_hub git checkout -q "$BRANCH"
 as_hub git pull -q --ff-only origin "$BRANCH"
+# bash reads this file while running it: after the pull, start over with the
+# version just fetched, or a change to this script only applies next time.
+if [ -z "${HUB_DEPLOY_FRESH:-}" ]; then HUB_DEPLOY_FRESH=1 exec bash "$APP/deploy/deploy.sh" "$@"; fi
 echo "codice: $(as_hub git log -1 --format='%h %s')"
 
 as_hub venv/bin/pip install -q -r requirements.txt

@@ -440,6 +440,49 @@ può provare dal PC).
 Notato durante la fase 2: `nume-web` usa 1,4 GB di RAM e `nerve` (vecchia UI di
 OpenClaw, non più in uso) è ancora attivo.
 
+## 13. Fase 3: in produzione il 2026-09-25
+
+- **Tab File**: note del vault con i `[[collegamenti]]` di Obsidian funzionanti
+  (anche quelli col solo nome), immagini incorporate, callout e tag; modifica e
+  salvataggio; ricerca che ignora accenti e maiuscole; foto e PDF caricati in
+  `Allegati` (le foto ridotte a 2048 px prima di partire: finiscono per sempre
+  nella cronologia di git); cartelle e note nuove.
+- **Cattura rapida**: una riga, scritta o dettata, in fondo a "Note libere" della
+  nota giornaliera del giorno del telefono (non del server, che è in UTC). Se la
+  nota non c'è la crea dal modello `Templates/Daily.md`, come Periodic Notes.
+- **Secondo aiutante root** (`deploy/vault/`), separato da quello dei servizi,
+  che non vede `/root`: attivato da socket, risponde solo a `hermes-hub`, gira
+  in un sandbox dove l'unico posto scrivibile è `/root/obsidian-vault`; usa le
+  credenziali GitHub già nel vault, l'Hub non le vede. La dashboard serve solo
+  per il codice e i log di Hermes, in sola lettura e solo sotto quelle due
+  cartelle.
+- **Git come annulla**: ogni scrittura è un commit di "Hermes Hub" con il solo
+  file toccato, inviato subito. Prima di scrivere l'aiutante scarica da GitHub:
+  modifiche su righe diverse si uniscono da sole; sulla stessa riga la nota torna
+  al telefono come conflitto, con la versione del PC, e niente viene scritto
+  finché non si sceglie (copia, sostituisci, torna a modificare). Se GitHub
+  cambia nei secondi fra pull e push restano entrambe le versioni, quella del
+  telefono in una copia "(conflitto telefono …)". Mai `--force`, mai reset che
+  perdono lavoro. Senza rete si salva sul server e si invia alla sincronizzazione
+  dopo. Le bozze restano sul telefono finché non sono salvate.
+- **Criteri verificati sul vault vero**: nota salvata tramite l'Hub, comparsa nel
+  vault del PC dopo il pull (quello che Obsidian Git fa ogni 30 minuti); prima
+  riga cambiata sul PC e inviata, salvataggio dal telefono sulla versione
+  vecchia fermato con 409 e la versione del PC restituita, sul server intatta;
+  "salva come copia" e dopo il pull sul PC c'erano tutte e due. Note di prova poi
+  tolte con un commit.
+- Aprire la tab sincronizza (al massimo una volta al minuto), quindi anche la
+  copia che legge Hermes resta aggiornata senza pull a mano.
+
+Visto durante il rilascio: `deploy.sh` aggiorna se stesso con il `git pull` ma
+bash stava già eseguendo la versione vecchia, quindi al primo giro l'aiutante
+nuovo non è stato installato. Ora lo script, dopo il pull, riparte da capo con
+la versione nuova.
+
+Non fatto, di proposito: cancellare e rinominare dal telefono (si fa su
+Obsidian; cancellare vorrebbe una conferma in più e rinominare dovrebbe
+aggiornare i collegamenti come fa Obsidian).
+
 ## Riepilogo
 
 | Fase | Cosa ottieni | Stima |
@@ -447,6 +490,6 @@ OpenClaw, non più in uso) è ancora attivo.
 | 0 | Backend solido, scheletro della nuova UI, Hermes aggiornato — **fatta** | 1 g |
 | 1 | Chat voce + testo con trascrizioni, sessioni di tutti i canali, approvazioni — **fatta** | 1 g |
 | 2 | Stato del server, log, cron, costi, notifiche push — **fatta** | 1 g |
-| 3 | Vault Obsidian e file dal telefono | 3-4 gg |
+| 3 | Vault Obsidian e file dal telefono — **fatta** | 1 g |
 | 4 | Chat da Beeper (WhatsApp, Instagram, ...), poi WeChat | da stimare |
 | 5 | Hermes che legge, riassume e risponde ai messaggi, con la tua conferma | 5-7 gg |
