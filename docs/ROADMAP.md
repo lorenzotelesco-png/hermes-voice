@@ -374,6 +374,14 @@ Voce e testo sono la stessa conversazione, su una sessione di Hermes:
 - Risposte JSON compresse: una trascrizione da 82 KB passa a 24 KB, da 1.3 s a
   0.86 s dal PC in Cina. Gli stream restano non compressi.
 
+Ritocco dopo il primo uso: la voce torna a schermo intero con l'animazione al
+centro, aperta dal tasto accanto al campo di testo come in ChatGPT; chiudendola
+si vede la chat. I blob seguono quattro bande di frequenza della voce (la tua
+mentre ascolta, quella di Hermes mentre parla), mentre pensa non ascoltano niente
+e si muovono in un altro modo; ogni stato ha i suoi colori. Provato nel browser
+con un microfono simulato che pronunciava le domande: giro completo, livelli a 0
+nelle pause di Hermes e mentre pensa.
+
 Da provare sul telefono: la voce con il microfono vero (qui è stata verificata la
 parte server, frasi comprese, non l'audio dell'iPhone).
 
