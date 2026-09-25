@@ -1,0 +1,38 @@
+[Unit]
+Description=Hermes Hub (voice + management app, 127.0.0.1:5000)
+After=network.target hermes-agent.service hermes-dashboard.service
+
+[Service]
+Type=simple
+User=hermes-hub
+Group=hermes-hub
+WorkingDirectory=/opt/hermes-hub
+EnvironmentFile=/opt/hermes-hub/.env
+Environment=HUB_DB=/var/lib/hermes-hub/hub.db
+StateDirectory=hermes-hub
+# Loopback only: ngrok reaches it locally, nothing else can.
+# No access log: the one-time ?k=<token> login would land in the journal in clear.
+ExecStart=/opt/hermes-hub/venv/bin/uvicorn hub.main:app --app-dir server --host 127.0.0.1 --port 5000 --no-access-log
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hermes-hub
+
+# The hub fronts an agent; it does not need to be able to change the system.
+# Everything it may write lives in StateDirectory (/var/lib/hermes-hub).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
