@@ -1,0 +1,13 @@
+[Unit]
+Description=Hermes Hub service controls (root side, see deploy/control/hermes-hub-control)
+
+[Socket]
+ListenStream=/run/hermes-hub-control.sock
+SocketUser=root
+SocketGroup=hermes-hub
+SocketMode=0660
+Accept=yes
+MaxConnections=8
+
+[Install]
+WantedBy=sockets.target

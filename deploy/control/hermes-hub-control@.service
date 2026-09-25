@@ -1,0 +1,16 @@
+[Unit]
+Description=Hermes Hub service control request
+CollectMode=inactive-or-failed
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/libexec/hermes-hub-control
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+SyslogIdentifier=hermes-hub-control
+# Root, because restarting units needs it; nothing else it does does.
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelModules=true
+RuntimeMaxSec=30

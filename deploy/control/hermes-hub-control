@@ -1,0 +1,74 @@
+#!/usr/bin/python3
+"""Root side of the hub's service controls: one request per connection.
+
+The hub runs unprivileged with NoNewPrivileges, so it cannot sudo, and polkit
+on Ubuntu 22.04 cannot grant "restart these units only". Instead systemd
+listens on a socket only the hermes-hub group can open
+(hermes-hub-control.socket) and starts this script, as root, for each
+connection (Accept=yes), with the connection on stdin/stdout.
+
+It answers exactly two questions, for exactly the units listed below, and
+checks who is asking. The lists live here, in a root-owned file, not in the
+hub: a compromised hub can ask, but not widen what may be asked.
+
+    {"action": "restart", "unit": "hermes-agent"}
+    {"action": "journal", "unit": "hermes-hub", "lines": 200}
+
+Installed by deploy/deploy.sh to /usr/local/libexec/hermes-hub-control from
+the commit fetched from GitHub, never from the working tree the hub can write.
+"""
+import json
+import pwd
+import socket
+import struct
+import subprocess
+import sys
+
+RESTART = {"hermes-agent", "hermes-dashboard", "hermes-webui", "ngrok-tunnel", "warp-svc", "warp-socks-ts"}
+JOURNAL = RESTART | {"hermes-hub", "tailscaled"}
+MAX_LINES = 300
+CALLER = "hermes-hub"
+
+
+def reply(sock, **payload):
+    sock.sendall((json.dumps(payload) + "\n").encode())
+
+
+def main():
+    sock = socket.socket(fileno=sys.stdin.fileno())
+    uid = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))[1]
+    if uid != pwd.getpwnam(CALLER).pw_uid:
+        return reply(sock, ok=False, error="caller not allowed")
+
+    sock.settimeout(5)
+    raw = b""
+    while not raw.endswith(b"\n") and len(raw) < 1024:
+        chunk = sock.recv(1024)
+        if not chunk:
+            break
+        raw += chunk
+    try:
+        req = json.loads(raw)
+        action, unit = req["action"], req["unit"]
+    except (ValueError, KeyError, TypeError):
+        return reply(sock, ok=False, error="bad request")
+
+    if action == "restart" and unit in RESTART:
+        # --no-block: restarting the tunnel or a slow service must not hold
+        # this connection (or the phone waiting behind it) open.
+        r = subprocess.run(["systemctl", "restart", "--no-block", f"{unit}.service"],
+                           capture_output=True, text=True, timeout=15)
+        print(f"restart {unit}: exit {r.returncode}", file=sys.stderr)
+        return reply(sock, ok=r.returncode == 0, error=r.stderr.strip()[:300] or None)
+
+    if action == "journal" and unit in JOURNAL:
+        lines = max(1, min(int(req.get("lines") or 100), MAX_LINES))
+        r = subprocess.run(["journalctl", "-u", f"{unit}.service", "-n", str(lines), "--no-pager",
+                            "-o", "short-iso", "-q"], capture_output=True, text=True, timeout=15)
+        return reply(sock, ok=r.returncode == 0, lines=[l[:1000] for l in r.stdout.splitlines()])
+
+    return reply(sock, ok=False, error=f"{action} not allowed for {unit}")
+
+
+if __name__ == "__main__":
+    main()

@@ -3,11 +3,13 @@
     uvicorn hub.main:app --app-dir server --host 127.0.0.1 --port 5000
 
 Phase 1: one conversation for voice and text on Hermes' own sessions, every
-channel's transcripts, and approvals answered from the phone.
+channel's transcripts, and approvals answered from the phone. Phase 2: the
+server — services, resources, logs, cron, restarts, and push alerts.
 """
 import asyncio
 import base64
 import collections
+import contextlib
 import json
 import re
 import time
@@ -16,10 +18,21 @@ from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
-from . import audit, config, hermes, runs, security, transcript
+from . import audit, config, control, hermes, monitor, push, runs, security, system, transcript
 from .speech import sse
 
-app = FastAPI(title="Hermes Hub", docs_url=None, redoc_url=None, openapi_url=None)
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app):
+    # The watcher runs whether or not anyone has the app open: that is the point.
+    task = asyncio.create_task(monitor.monitor.run()) if config.MONITOR else None
+    yield
+    if task:
+        task.cancel()
+
+
+app = FastAPI(title="Hermes Hub", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 # A long transcript is ~100 KB of JSON, which the link from China to the
 # server takes over a second to carry; compressed it is a fifth of that.
 # Starlette never compresses text/event-stream, which must flush as it goes.
@@ -333,11 +346,203 @@ def event_stream(run, after=-1):
     })
 
 
-@app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "DELETE"])
+# ── Server (phase 2) ──────────────────────────────────────────────
+async def _safe(coro):
+    try:
+        return await coro, None
+    except Exception as e:  # noqa: BLE001 — one missing piece must not blank the whole page
+        return None, str(e)
+
+
+def _usage(data):
+    """Cost per day for the last 7 days, zeros included, and the totals."""
+    if not data:
+        return None
+    by_day = {d.get("day"): d for d in data.get("daily") or []}
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    days = []
+    for back in range(6, -1, -1):
+        day = time.strftime("%Y-%m-%d", time.gmtime(time.time() - back * 86400))
+        d = by_day.get(day) or {}
+        days.append({"day": day, "cost": round(d.get("actual_cost") or d.get("estimated_cost") or 0, 4),
+                     "calls": d.get("api_calls") or 0})
+    totals = data.get("totals") or {}
+    return {
+        "days": days,
+        "today": next(d["cost"] for d in days if d["day"] == today),
+        "week": round(totals.get("total_actual_cost") or totals.get("total_estimated_cost") or 0, 4),
+        "calls": totals.get("total_api_calls") or 0,
+        "sessions": totals.get("total_sessions") or 0,
+    }
+
+
+def _platforms(raw):
+    if isinstance(raw, dict):
+        return [{"name": k, "state": (v.get("state") or v.get("status") if isinstance(v, dict) else v)}
+                for k, v in raw.items()]
+    return []
+
+
+@app.get("/api/server/overview")
+async def server_overview():
+    (units, units_err), (running, _), (status, status_err), (usage, usage_err) = await asyncio.gather(
+        _safe(system.units(config.MONITORED)), _safe(system.running_services()),
+        _safe(hermes.dashboard_get("/api/status")),
+        _safe(hermes.dashboard_get("/api/analytics/usage", params={"days": 7})))
+    others = []
+    if running:
+        extra = [n for n in running if n not in config.MONITORED]
+        others, _ = await _safe(system.units(extra))
+        others = sorted(others or [], key=lambda u: -(u["memory"] or 0))[:25]
+    for u in units or []:
+        u["restartable"] = u["unit"] in config.RESTARTABLE
+    res, res_err = None, None
+    try:
+        res = system.resources()
+    except OSError as e:
+        res_err = str(e)
+    return {
+        "services": units or [],
+        "others": others,
+        "resources": res,
+        "hermes": status and {
+            "version": status.get("version"), "gateway": status.get("gateway_state"),
+            "sessions": status.get("active_sessions"), "platforms": _platforms(status.get("gateway_platforms")),
+        },
+        "usage": _usage(usage),
+        "alerts": monitor.monitor.alerts,
+        "checked_at": monitor.monitor.checked_at,
+        "devices": len(push.subscriptions()),
+        "errors": {k: v for k, v in {"services": units_err, "hermes": status_err,
+                                     "usage": usage_err, "resources": res_err}.items() if v},
+    }
+
+
+@app.post("/api/server/services/{unit}/restart")
+async def restart_service(unit: str):
+    if unit not in config.RESTARTABLE:
+        return error("questo servizio non si riavvia dall'app", 403)
+    try:
+        await control.request("restart", unit)
+    except control.ControlError as e:
+        audit.record("pwa", "restart", f"unit={unit} error={e}", ok=False)
+        return error(str(e), e.status)
+    audit.record("pwa", "restart", f"unit={unit}")
+    return {"ok": True}
+
+
+HERMES_LOGS = {"agent", "errors", "gateway"}
+LOG_LEVELS = {"", "DEBUG", "INFO", "WARNING", "ERROR"}
+
+
+@app.get("/api/server/logs")
+async def server_logs(source: str = "agent", level: str = "", search: str = "", lines: int = 200):
+    lines = min(max(lines, 20), 500)
+    level, search = level.upper(), search.strip()[:100]
+    if level not in LOG_LEVELS:
+        return error("invalid level", 400)
+    if source in HERMES_LOGS:
+        params = {"file": source, "lines": lines}
+        if level:
+            params["level"] = level
+        if search:
+            params["search"] = search
+        data = await hermes.dashboard_get("/api/logs", params=params)
+        return {"source": source, "lines": data.get("lines") or []}
+    unit = source.removeprefix("unit:")
+    if not source.startswith("unit:") or unit not in config.MONITORED:
+        return error("unknown log source", 400)
+    try:
+        answer = await control.request("journal", unit, lines=lines)
+    except control.ControlError as e:
+        return error(str(e), e.status)
+    out = answer.get("lines") or []
+    if search:
+        out = [line for line in out if search.lower() in line.lower()]
+    return {"source": source, "lines": out}
+
+
+JOB_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+CRON_ACTIONS = {"pause", "resume", "trigger"}
+
+
+def _schedule(job):
+    s = job.get("schedule_display") or job.get("schedule")
+    if isinstance(s, dict):
+        return s.get("display") or s.get("expr") or s.get("value") or ""
+    return str(s or "")
+
+
+@app.get("/api/server/cron")
+async def cron_jobs():
+    jobs = await hermes.dashboard_get("/api/cron/jobs")
+    return {"jobs": [{
+        "id": j.get("id"), "name": j.get("name") or j.get("id"), "schedule": _schedule(j),
+        "state": j.get("state"), "enabled": j.get("enabled", True),
+        "next_run_at": j.get("next_run_at"), "last_run_at": j.get("last_run_at"),
+        "last_status": j.get("last_status"), "last_error": (j.get("last_error") or "")[:300],
+        "profile": j.get("profile"),
+    } for j in jobs or []]}
+
+
+@app.post("/api/server/cron/{job_id}/{action}")
+async def cron_action(job_id: str, action: str):
+    if action not in CRON_ACTIONS or not JOB_ID.match(job_id):
+        return error("invalid cron action", 400)
+    try:
+        await hermes.dashboard_post(f"/api/cron/jobs/{job_id}/{action}", {})
+    except hermes.HermesError:
+        audit.record("pwa", f"cron-{action}", f"job={job_id}", ok=False)
+        raise
+    audit.record("pwa", f"cron-{action}", f"job={job_id}")
+    return {"ok": True}
+
+
+# ── Push notifications ────────────────────────────────────────────
+@app.get("/api/push/key")
+async def push_key():
+    return {"key": push.public_key(), "devices": len(push.subscriptions())}
+
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(request: Request):
+    body = await request.json()
+    origin = request.headers.get("origin") or ""
+    subject = origin if origin.startswith("https://") else "https://" + (
+        request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost")
+    try:
+        push.subscribe(body.get("subscription") or {}, subject)
+    except ValueError as e:
+        return error(str(e), 400)
+    audit.record("pwa", "push-subscribe", request.headers.get("user-agent", "")[:120])
+    return {"ok": True, "devices": len(push.subscriptions())}
+
+
+@app.post("/api/push/unsubscribe")
+async def push_unsubscribe(request: Request):
+    body = await request.json()
+    push.unsubscribe(str(body.get("endpoint") or ""))
+    audit.record("pwa", "push-unsubscribe")
+    return {"ok": True, "devices": len(push.subscriptions())}
+
+
+@app.post("/api/push/test")
+async def push_test():
+    sent = await push.send_all("Notifiche attive", "Da qui arriveranno gli avvisi del server.", tag="test")
+    return {"sent": sent}
+
+
+@app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def api_not_found(rest: str):
     # Without this the SPA fallback below would answer unknown API calls with
     # index.html and a 200, which reads as success to a fetch.
     return error("not found", 404)
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    icon = config.WEB_DIST / "icons" / "icon-192.png"
+    return FileResponse(icon, media_type="image/png") if icon.is_file() else error("not found", 404)
 
 
 # ── App shell ─────────────────────────────────────────────────────

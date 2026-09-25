@@ -17,8 +17,21 @@ as_hub venv/bin/pip install -q -r requirements.txt
 (cd web && as_hub npm ci --silent --no-audit --no-fund && as_hub npm run build --silent >/dev/null)
 echo "app compilata"
 
-install -m 644 deploy/hermes-hub.service /etc/systemd/system/hermes-hub.service
+# What runs as root or defines how the hub runs comes from the commit fetched
+# from GitHub, never from the working tree: the hub can write its own
+# checkout, and must not be able to change what root executes.
+REF="origin/$BRANCH"
+from_git() { git -c safe.directory="$APP" -C "$APP" show "$REF:$1"; }
+install_from_git() {  # path mode destination
+  from_git "$1" > "$3.new" && chmod "$2" "$3.new" && chown root:root "$3.new" && mv "$3.new" "$3"
+}
+install_from_git deploy/hermes-hub.service 644 /etc/systemd/system/hermes-hub.service
+install -d -m 755 /usr/local/libexec
+install_from_git deploy/control/hermes-hub-control 755 /usr/local/libexec/hermes-hub-control
+install_from_git deploy/control/hermes-hub-control.socket 644 /etc/systemd/system/hermes-hub-control.socket
+install_from_git "deploy/control/hermes-hub-control@.service" 644 "/etc/systemd/system/hermes-hub-control@.service"
 systemctl daemon-reload
+systemctl enable -q --now hermes-hub-control.socket
 systemctl restart hermes-hub
 
 for _ in $(seq 1 20); do

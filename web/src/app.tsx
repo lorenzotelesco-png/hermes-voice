@@ -7,6 +7,9 @@ import { Sessions } from './chat/Sessions';
 import { ApprovalSheet } from './chat/ApprovalSheet';
 import { VoiceStage } from './chat/VoiceStage';
 import { SoonTab } from './tabs/SoonTab';
+import { ServerTab } from './server/ServerTab';
+import { Logs } from './server/Logs';
+import { Cron } from './server/Cron';
 import { MoreTab } from './tabs/MoreTab';
 
 type TabId = 'chat' | 'server' | 'file' | 'altro';
@@ -25,7 +28,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'altro', label: 'Altro' },
 ];
 
-// #/chat, #/chat/sessioni, #/server ...
+// #/chat, #/chat/sessioni, #/server, #/server/log, #/server/cron ...
 function currentRoute(): { tab: TabId; sub: string } {
   const [id, sub = ''] = location.hash.replace(/^#\/?/, '').split('/');
   return TABS.some(t => t.id === id) ? { tab: id as TabId, sub } : { tab: 'chat', sub: '' };
@@ -71,11 +74,7 @@ export function App() {
         {/* The voice session lives in the engine and the conversation in the
             store, not in these components: leaving the tab ends neither. */}
         {tab === 'chat' && (sub === 'sessioni' ? <Sessions /> : <ChatTab />)}
-        {tab === 'server' && (
-          <SoonTab title="Server" phase={2}>
-            Stato dei servizi, CPU, RAM e disco, log, cron, costi e notifiche quando qualcosa si ferma.
-          </SoonTab>
-        )}
+        {tab === 'server' && (sub === 'log' ? <Logs /> : sub === 'cron' ? <Cron /> : <ServerTab />)}
         {tab === 'file' && (
           <SoonTab title="File" phase={3}>
             Il vault Obsidian e i file di lavoro, da leggere e modificare dal telefono.
