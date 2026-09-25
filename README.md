@@ -17,6 +17,10 @@ Works as a PWA from iPhone Safari over HTTPS.
 
 ## Features
 
+- **Voice mode** — full screen, opened from the button next to the text field as
+  in ChatGPT; closing it shows the chat with the transcript. Four blobs follow
+  four voice bands: your voice while it listens, Hermes' voice while it speaks.
+  Thinking moves differently and listens to nothing. Each state has its colors.
 - **Always-listening VAD** — adaptive noise floor calibration, no push-to-talk
 - **Speech I/O delegated to Hermes** — STT and TTS run on the Hermes dashboard, so
   providers, models and voices are configured once in `config.yaml` and shared with
@@ -127,7 +131,7 @@ someone off costs a whole retry, which is far more expensive than the few hundre
 milliseconds a longer pause costs.
 
 **Where the time goes:** turn on "Tempi sullo schermo" in the Altro tab (or add
-`?debug=1`) and a timing strip appears above the voice controls, marking each phase
+`?debug=1`) and a timing strip appears at the top of the voice screen, marking each phase
 from the end of your speech:
 
 ```

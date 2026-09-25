@@ -5,6 +5,7 @@ import { chat } from './chat/store';
 import { ChatTab } from './chat/ChatTab';
 import { Sessions } from './chat/Sessions';
 import { ApprovalSheet } from './chat/ApprovalSheet';
+import { VoiceStage } from './chat/VoiceStage';
 import { SoonTab } from './tabs/SoonTab';
 import { MoreTab } from './tabs/MoreTab';
 
@@ -34,6 +35,7 @@ export function App() {
   const [route, setRoute] = useState(currentRoute);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(voice.active);
 
   useEffect(() => {
     const onHash = () => setRoute(currentRoute());
@@ -43,7 +45,7 @@ export function App() {
 
   // Voice on, or Hermes still working: worth a dot on the tab from elsewhere.
   useEffect(() => {
-    const update = () => setBusy(voice.active || chat.snapshot.running);
+    const update = () => { setBusy(voice.active || chat.snapshot.running); setVoiceOn(voice.active); };
     const a = voice.subscribe(update);
     const b = chat.subscribe(update);
     return () => { a(); b(); };
@@ -91,6 +93,9 @@ export function App() {
           </a>
         ))}
       </nav>
+      {/* Voice mode covers everything; closing it shows the chat, where the
+          transcript of what was said has been building up underneath. */}
+      {voiceOn && <VoiceStage />}
       <ApprovalSheet />
     </div>
   );
