@@ -35,7 +35,7 @@ function animate(blobs: HTMLDivElement[], t: number) {
   });
 }
 
-function MicIcon() {
+export function MicIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <rect x="9" y="2" width="6" height="12" rx="3" />
@@ -45,59 +45,45 @@ function MicIcon() {
   );
 }
 
-export function VoiceTab() {
+/** The voice session, docked under the thread so the transcript stays in view. */
+export function VoiceDock() {
   const [snap, setSnap] = useState<Snapshot>(voice.snapshot);
   const blobRefs = useRef<HTMLDivElement[]>([]);
 
   useEffect(() => voice.subscribe(setSnap), []);
 
-  const running = snap.state !== 'off';
   useEffect(() => {
-    if (!running) return;
     let raf = 0;
     const loop = (ts: number) => {
       animate(blobRefs.current, ts / 1000);
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
-    return () => {
-      cancelAnimationFrame(raf);
-      blobRefs.current.forEach(b => { if (b) { b.style.transform = ''; b.style.opacity = ''; } });
-    };
-  }, [running]);
-
-  if (!running) {
-    return (
-      <button class="voice-start" onClick={() => voice.start()}>
-        <h1>HERMES</h1>
-        <span class="rule" />
-        <p>assistente vocale</p>
-        <span class="voice-start-hint">tocca per iniziare</span>
-      </button>
-    );
-  }
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   return (
-    // A tap anywhere while Hermes speaks cuts the reply short.
-    <div class={`voice-stage is-${snap.state}`}
+    // A tap anywhere on the dock while Hermes speaks cuts the reply short.
+    <div class={`voice-dock is-${snap.state}`}
          onClick={() => { if (voice.snapshot.state === 'speaking') voice.interrupt(); }}>
-      <div class="blobs">
-        {PHASES.map((_, i) => (
-          <div class="blob" key={i} ref={el => { if (el) blobRefs.current[i] = el; }} />
-        ))}
+      {DEBUG && snap.debug && <div class="debug">{snap.debug}</div>}
+      <div class="dock-stage">
+        <div class="blobs">
+          {PHASES.map((_, i) => (
+            <div class="blob" key={i} ref={el => { if (el) blobRefs.current[i] = el; }} />
+          ))}
+        </div>
+        <div class="voice-label">{snap.state === 'speaking' ? 'tocca per interrompere' : snap.label}</div>
       </div>
-      <div class="voice-label">{snap.label}</div>
-      <div class="voice-hint">tocca per interrompere</div>
       <div class="voice-controls" onClick={e => e.stopPropagation()}>
         <button class={`ctrl ctrl-mute${snap.muted ? ' is-muted' : ''}`} title="Muto"
                 aria-pressed={snap.muted} onClick={() => voice.toggleMute()}>
           <MicIcon />
         </button>
-        <button class="ctrl ctrl-end" title="Termina" onClick={() => voice.stop()}>
+        <button class="ctrl ctrl-end" title="Termina la voce" onClick={() => voice.stop()}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /></svg>
         </button>
       </div>
-      {DEBUG && snap.debug && <div class="debug">{snap.debug}</div>}
     </div>
   );
 }

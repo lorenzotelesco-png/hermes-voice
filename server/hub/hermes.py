@@ -4,12 +4,20 @@ Every call to Hermes goes through here, so that an endpoint changing shape
 after `hermes update` is a one-file fix, and scripts/contract_check.py can
 test exactly what the hub depends on.
 """
+import json
+from urllib.parse import quote
+
 import httpx
 
 from . import config
 
 # Tests swap this for an httpx.MockTransport; production leaves it None.
 transport = None
+
+# Long-term memory scope for everything said through the hub, voice or text.
+# Deliberately not a session id: memory should follow the person across
+# conversations. Unchanged from the voice app so its memories carry over.
+MEMORY_SCOPE = "hermes-voice:pwa"
 
 
 def client(timeout):
@@ -22,6 +30,11 @@ class HermesError(Exception):
     def __init__(self, message, status=502):
         super().__init__(message)
         self.status = status
+
+
+def seg(value):
+    """One path segment, so an id can never reach another endpoint."""
+    return quote(str(value), safe="")
 
 
 # ── Dashboard ─────────────────────────────────────────────────────
@@ -66,40 +79,82 @@ async def dashboard_post(path, payload, timeout=60):
 
 
 # ── API server ────────────────────────────────────────────────────
-async def open_chat_stream(messages, session_id=None):
-    """Start a streamed completion. Returns (client, response); caller closes both.
+def _api_headers():
+    return {"Authorization": f"Bearer {config.HERMES_API_KEY}"}
 
-    Streamed, so the first sentence can be spoken while the model is still
-    writing the rest. Waiting for the complete reply before synthesizing was
-    the single largest source of dead air in the voice pipeline.
-    """
-    headers = {"Authorization": f"Bearer {config.HERMES_API_KEY}"}
-    if session_id:
-        # Transcript scope: keeps a voice session as one conversation in the
-        # dashboard and session history instead of N orphaned turns.
-        headers["X-Hermes-Session-Id"] = session_id
-        # Stable long-term memory scope — deliberately NOT the session id,
-        # which rotates per voice session.
-        headers["X-Hermes-Session-Key"] = "hermes-voice:pwa"
-    payload = {
-        "model": config.HERMES_MODEL,
-        "messages": messages,
-        "max_tokens": config.HERMES_MAX_TOKENS,
-        "stream": True,
-    }
-    c = client(httpx.Timeout(60, read=180))
+
+def _api_status_error(code, text):
+    if code in (401, 403):
+        return HermesError(f"Hermes rejected the request ({code}). "
+                           f"Check HERMES_API_KEY matches API_SERVER_KEY.")
     try:
-        r = await c.send(c.build_request("POST", config.HERMES_API_URL, json=payload, headers=headers),
-                         stream=True)
+        message = json.loads(text)["error"]["message"]
+    except (ValueError, KeyError, TypeError):
+        message = text[:300]
+    # Not found / conflict / bad input are answers about the request, and the
+    # phone needs to tell them apart from Hermes being down.
+    return HermesError(f"Hermes: {message}", status=code if code in (400, 404, 409) else 502)
+
+
+def _api_unreachable(exc):
+    return HermesError(f"Hermes unreachable at {config.HERMES_API_BASE} ({exc})", status=503)
+
+
+async def api_request(method, path, payload=None, params=None, timeout=15):
+    try:
+        async with client(timeout) as c:
+            r = await c.request(method, config.HERMES_API_BASE + path, headers=_api_headers(),
+                                json=payload, params=params)
+    except httpx.HTTPError as e:
+        raise _api_unreachable(e) from e
+    if r.status_code >= 400:
+        raise _api_status_error(r.status_code, r.text)
+    return r.json()
+
+
+async def open_session_stream(session_id, message, system_message=None):
+    """Start a turn on a Hermes session. Returns (client, response); caller closes both.
+
+    Hermes keeps the whole conversation server-side, so only the new message
+    goes up. Streamed, so the first sentence can be spoken while the model is
+    still writing the rest.
+    """
+    headers = {**_api_headers(), "X-Hermes-Session-Key": MEMORY_SCOPE}
+    payload = {"message": message}
+    if system_message:
+        # Per turn, never stored: a voice turn asks for speakable prose, a
+        # typed one in the same conversation may use Markdown.
+        payload["system_message"] = system_message
+    # No read timeout worth the name: a turn can wait on an approval or a long
+    # tool, and Hermes sends keepalives meanwhile.
+    c = client(httpx.Timeout(60, read=600))
+    try:
+        r = await c.send(c.build_request(
+            "POST", f"{config.HERMES_API_BASE}/api/sessions/{seg(session_id)}/chat/stream",
+            json=payload, headers=headers), stream=True)
     except httpx.HTTPError as e:
         await c.aclose()
-        raise HermesError(f"Hermes unreachable at {config.HERMES_API_URL} ({e})", status=503) from e
+        raise _api_unreachable(e) from e
     if r.status_code >= 400:
-        body = (await r.aread()).decode(errors="replace")[:300]
+        text = (await r.aread()).decode(errors="replace")
         await r.aclose()
         await c.aclose()
-        if r.status_code in (401, 403):
-            raise HermesError(f"Hermes rejected the request ({r.status_code}). "
-                              f"Check HERMES_API_KEY matches API_SERVER_KEY.")
-        raise HermesError(f"Hermes HTTP {r.status_code}: {body}")
+        raise _api_status_error(r.status_code, text)
     return c, r
+
+
+async def sse_events(response):
+    """(event name, payload) for each event of a Hermes SSE response."""
+    event, data = "", []
+    async for line in response.aiter_lines():
+        if not line:
+            if data:
+                try:
+                    yield event or "message", json.loads("\n".join(data))
+                except ValueError:
+                    pass
+            event, data = "", []
+        elif line.startswith("event:"):
+            event = line[6:].strip()
+        elif line.startswith("data:"):
+            data.append(line[5:].strip())
