@@ -424,8 +424,8 @@ l'aggiornamento di Hermes del mattino (v0.21.5) chi importa Hermes viene
 rilanciato nel suo nuovo Python 3.14 gestito da `hermes pm`, dove manca
 `pyyaml`, che la Web UI richiede. Girava ancora solo perché avviata il 23/09.
 Fermata a mano dopo 88 ripartenze (circa un quarto di CPU). Poi **rimossa**
-(decisione dell'utente, 25/09): nessuno la usava dal 17/06 e con il firewall
-spento era esposta su internet con la sola password. Servizio disabilitato;
+(decisione dell'utente, 25/09): nessuno la usava dal 17/06 (raggiungibile solo
+via Tailscale: il firewall scarta la 8787 su `eth0`). Servizio disabilitato;
 codice, sessioni e unit spostati in `/root/backups/hermes-webui-2026-09-25/`
 (140 MB, cancellabili quando non servono più); tolta dalle liste dell'Hub e
 dell'aiutante root. Ha anche mostrato un difetto del sorvegliante,
