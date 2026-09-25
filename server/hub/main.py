@@ -539,6 +539,12 @@ async def api_not_found(rest: str):
     return error("not found", 404)
 
 
+@app.get("/favicon.ico")
+async def favicon():
+    icon = config.WEB_DIST / "icons" / "icon-192.png"
+    return FileResponse(icon, media_type="image/png") if icon.is_file() else error("not found", 404)
+
+
 # ── App shell ─────────────────────────────────────────────────────
 # Hashed assets never change under the same name, so they can be cached for
 # good. index.html must never be cached: Safari holds a home-screen app's shell

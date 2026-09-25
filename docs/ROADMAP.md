@@ -395,13 +395,43 @@ Da sapere:
 - Le sessioni di prova dei benchmark sono nella cronologia di Hermes insieme
   alle altre (vedi le pulizie al punto 10).
 
+## 12. Fase 2: in produzione il 2026-09-25
+
+- **Tab Server**: servizi sorvegliati (stato, da quanto, memoria, riavvii
+  automatici), gli altri servizi in esecuzione ordinati per memoria, RAM,
+  disco, carico, Hermes (versione, gateway, sessioni, piattaforme), costi di
+  oggi e dei 7 giorni. Log di Hermes con filtro per livello e testo, journal dei
+  servizi, aggiornamento automatico. Cron con pausa, ripresa e avvio (oggi non
+  ce n'è nessuno).
+- **Riavvii**: il piano diceva sudoers, ma l'Hub gira con `NoNewPrivileges` e
+  `sudo` lì non funziona; polkit 0.105 di Ubuntu 22.04 non sa limitare a singole
+  unit. Al suo posto un aiutante root attivato da socket
+  (`deploy/control/`): risponde solo all'utente `hermes-hub` e tiene la sua
+  lista (Hermes, dashboard, Web UI, ngrok, WARP). Verificato: `ssh` rifiutato,
+  un altro utente non si collega, root respinto. Riavvio della Web UI dall'app
+  riuscito e nel registro.
+- **Avvisi push** senza servizi esterni oltre al push di Apple: cifratura RFC
+  8291 e VAPID scritti su `cryptography`, identici byte per byte all'esempio
+  della RFC. **Criterio verificato** con un servizio "canarino" temporaneo:
+  fermato alle 11:09:18, avviso alle 11:11:4x (circa 2 min 25 s), avviso di
+  ritorno alla ripartenza; canarino poi rimosso.
+- Icona, manifest e worker delle notifiche ora sono pubblici: iOS li chiede
+  senza cookie e i 401 riempivano il registro.
+
+Da fare con il telefono: attivare "Avvisi sul telefono" dall'app sulla
+schermata Home e mandare la notifica di prova (la consegna tramite Apple non si
+può provare dal PC).
+
+Notato durante la fase 2: `nume-web` usa 1,4 GB di RAM e `nerve` (vecchia UI di
+OpenClaw, non più in uso) è ancora attivo.
+
 ## Riepilogo
 
 | Fase | Cosa ottieni | Stima |
 |---|---|---|
 | 0 | Backend solido, scheletro della nuova UI, Hermes aggiornato — **fatta** | 1 g |
 | 1 | Chat voce + testo con trascrizioni, sessioni di tutti i canali, approvazioni — **fatta** | 1 g |
-| 2 | Stato del server, log, cron, costi, notifiche push | 3-4 gg |
+| 2 | Stato del server, log, cron, costi, notifiche push — **fatta** | 1 g |
 | 3 | Vault Obsidian e file dal telefono | 3-4 gg |
 | 4 | Chat da Beeper (WhatsApp, Instagram, ...), poi WeChat | da stimare |
 | 5 | Hermes che legge, riassume e risponde ai messaggi, con la tua conferma | 5-7 gg |

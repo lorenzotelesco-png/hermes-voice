@@ -2,8 +2,9 @@
 
 One phone app for [Hermes Agent](https://github.com/NousResearch/hermes-agent),
 running on your own server: talk or type in the same conversation, read the
-transcript of every channel Hermes is on, and answer its approval requests from
-the phone. Server, files and an inbox of your chats come next — the plan is in
+transcript of every channel Hermes is on, answer its approval requests, and
+watch and fix the server — with a push notification when something breaks.
+Files and an inbox of your chats come next — the plan is in
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
 Voice is hands-free, like ChatGPT Voice Mode: speak → Whisper STT → Hermes → TTS,
@@ -39,6 +40,12 @@ Works as a PWA from iPhone Safari over HTTPS.
   yes, a sheet shows the exact command with Approve / Deny.
 - **Turns survive the app leaving the screen** — iOS drops the connection; the
   hub keeps reading the turn and the app picks it up where it left off.
+- **Server tab** — services with state, uptime and memory, RAM/disk/load, Hermes'
+  gateway, cost today and over 7 days; logs (Hermes' files and the services'
+  journals) with filters; cron jobs; restart a service with one confirmed tap.
+- **Push alerts** — a service down for 2 minutes, restarts by systemd (OOM
+  named), disk over 85%, RAM under 300 MB, failed cron runs. They go through
+  Apple's push service, so an alert that the tunnel is down still arrives.
 - **iOS Safari compatible** — AudioContext unlock, correct `audio/mp4` MIME handling
 - **App shell with tabs** — Chat, Server, File, Altro; a voice session or a
   running turn keeps going while you look at another tab
@@ -67,7 +74,12 @@ Hub — FastAPI on 127.0.0.1:5000   (thin proxy + the built app, no speech stack
   ├── POST /api/runs/{id}/approval | stop ► Hermes :8642 /v1/runs/{id}/…
   ├── GET  /api/sessions[/{id}] ► Hermes :8642 session list and transcript
   ├── GET  /api/sessions/search ► Hermes dashboard :9119 full-text search
-  └── POST /api/tts        ──► Hermes dashboard :9119 /api/audio/speak      ──► audio
+  ├── POST /api/tts        ──► Hermes dashboard :9119 /api/audio/speak      ──► audio
+  ├── GET  /api/server/*   ──► systemctl show, /proc (read without privileges),
+  │                            dashboard logs / cron / usage / status
+  ├── POST …/restart, GET logs of a service ──► hermes-hub-control (root helper)
+  └── POST /api/push/*     ──► subscriptions; alerts go out via Apple's push service
+      (background)  the watcher: every 30 s, services, disk, RAM, cron → push
 ```
 
 Both dashboard calls authenticate with `X-Hermes-Session-Token`; the dashboard is
@@ -79,6 +91,10 @@ and after `hermes update`.
 | Path | What lives there |
 |------|------------------|
 | `server/hub/` | The backend: `main.py` routes, `security.py` access gate, `hermes.py` Hermes clients, `runs.py` turns that outlive the connection, `transcript.py` what the phone is shown of a session, `speech.py` sentence cutting, `audit.py` action log |
+| `server/hub/system.py`, `monitor.py` | What systemd and /proc say, and the alert rules |
+| `server/hub/control.py`, `deploy/control/` | Restarts and service journals, through the root-side helper |
+| `server/hub/push.py`, `webpush.py` | Push subscriptions, and the RFC 8291 / VAPID sender |
+| `web/src/server/` | The Server tab: overview, logs, cron |
 | `web/src/chat/` | The Chat tab: `store.ts` the conversation on screen, thread, conversation list, approval sheet, voice dock |
 | `web/src/voice/engine.ts` | The voice pipeline: VAD, STT, streamed speech, barge-in |
 | `web/src/tabs/` | The other tabs |
@@ -102,6 +118,31 @@ and after `hermes update`.
   Every answer and every stop goes to the audit log with the command.
 - **Voice turns** carry a per-turn instruction for speakable replies; typed turns
   in the same conversation do not, so they may use Markdown.
+
+### The Server tab, restarts and alerts
+
+- **Reading needs no privileges.** Service state comes from `systemctl show`,
+  RAM/disk/load from /proc, all inside the unprivileged hub. Hermes' version,
+  gateway, logs, cron and costs come from the dashboard; if it is down the page
+  says so and still shows the rest.
+- **Changing something goes through a root helper.** The hub runs with
+  `NoNewPrivileges`, so it cannot sudo, and polkit on Ubuntu 22.04 cannot grant
+  "these units only". `hermes-hub-control.socket` listens on
+  `/run/hermes-hub-control.sock` (group `hermes-hub` only) and starts
+  `/usr/local/libexec/hermes-hub-control` as root per request. It checks the
+  caller is the `hermes-hub` user and keeps its own allowlists (restart:
+  Hermes, dashboard, Web UI, ngrok, WARP; journal: those plus the hub and
+  Tailscale). `deploy.sh` installs it from the commit fetched from GitHub, not
+  from the working tree, which the hub can write. Every restart and cron action
+  is in the audit log.
+- **Alerts** are checked every 30 s by the hub itself, whether or not the app is
+  open, and sent once when a problem starts and once when it ends. The first
+  look after a restart of the hub only sets a baseline.
+- **Push on iPhone** needs the app opened from the home screen (iOS 16.4+):
+  Server › Notifiche › "Avvisi sul telefono". The sender is written on top of
+  `cryptography` (no pywebpush) and tested byte for byte against RFC 8291's
+  example. The VAPID key lives in `/var/lib/hermes-hub/vapid.pem`; replacing it
+  orphans every subscription.
 
 **Where things are configured** — this server decides almost nothing:
 
@@ -395,6 +436,8 @@ the transcripts are in the app.
 | `HERMES_DASHBOARD_TOKEN` | *(required)* | Must equal `HERMES_DASHBOARD_SESSION_TOKEN` on the dashboard |
 | `HERMES_API_URL` | `http://127.0.0.1:8642` | Hermes API server. A full `…/v1/chat/completions` URL from older setups also works: only the origin is used |
 | `HERMES_API_KEY` | *(required)* | Bearer token — must equal `API_SERVER_KEY` in `~/.hermes/.env` |
+| `HUB_SERVICES` | Hermes, dashboard, hub, ngrok, Web UI, Tailscale, WARP | Services shown and watched (comma-separated unit names) |
+| `HUB_RESTARTABLE` | Hermes, dashboard, Web UI, ngrok, WARP | Which of them get a restart button; the root helper has its own list and the last word |
 
 The port (5000) is set in `deploy/hermes-hub.service`, not here.
 
@@ -436,6 +479,10 @@ web:
 **`/api/transcribe` or `/api/tts` returns 503** — the dashboard is not running. `systemctl status hermes-dashboard`, and check the `web` extra is installed.
 
 **The app shows an old version** — "Altro" shows the commit and build time. `index.html` is never cached, so a stale version means the build did not run: `cd web && npm run build`, or use `deploy/deploy.sh`.
+
+**"Il controllo dei servizi non è installato"** — the root helper is missing: run `deploy/deploy.sh`, which installs `hermes-hub-control.socket`. Check with `systemctl status hermes-hub-control.socket`.
+
+**No push notification on the iPhone** — it only works in the app opened from the home screen, on iOS 16.4 or later, with notifications allowed in Settings › Notifications › Hermes. "Invia una notifica di prova" in the Server tab says how many devices accepted it; `journalctl -u hermes-hub | grep PUSH` shows what Apple answered.
 
 **Something broke after `hermes update`** — `python3 scripts/contract_check.py` names the endpoint and the missing field.
 

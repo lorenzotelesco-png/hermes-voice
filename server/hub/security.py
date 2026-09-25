@@ -22,7 +22,13 @@ from . import config
 
 COOKIE = "hv_auth"
 MAX_AGE = 365 * 24 * 3600          # a phone should not re-authenticate often
-PUBLIC_PATHS = {"/health", "/api/health"}
+PUBLIC_PATHS = {"/health", "/api/health",
+                # Static files with nothing private in them, which iOS fetches
+                # without the cookie: the home-screen icon and name, the push
+                # worker. Refusing them only filled the log with 401s and could
+                # leave the app without its icon.
+                "/favicon.ico", "/manifest.json", "/sw.js",
+                "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png"}
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 

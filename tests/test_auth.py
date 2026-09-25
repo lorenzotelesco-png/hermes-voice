@@ -93,5 +93,14 @@ assert me.get("/api/voice-config").status_code == 503
 assert me.get("/health").status_code == 503
 print("VOICE_AUTH_TOKEN assente: 503, fail closed  OK")
 
+# Static files iOS fetches without the cookie: never 401. Nothing else widens.
+config.VOICE_AUTH_TOKEN = _setup.TOKEN   # the block above left the gate unconfigured
+anon = _setup.anon_client()
+for path in ["/favicon.ico", "/manifest.json", "/sw.js", "/icons/icon-192.png"]:
+    assert anon.get(path).status_code != 401, path
+for path in ["/", "/icons/../api/sessions", "/api/server/overview", "/api/push/key"]:
+    assert anon.get(path).status_code == 401, path
+print("icona, manifest e worker pubblici; tutto il resto no  OK")
+
 print()
 print("OK: il gate regge token mancante, errato, manomesso, scaduto, cross-site e non configurato")
