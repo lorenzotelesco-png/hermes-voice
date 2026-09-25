@@ -2,7 +2,9 @@
 
 Rules (ROADMAP, phase 2):
   - a watched service not active for 2 minutes     → alert, and again when it is back
-  - a watched service restarted by systemd itself  → one notice, with the reason (OOM included)
+  - a watched service restarted by systemd itself  → one notice, with the reason (OOM included),
+                                                     at most every 30 minutes
+  - 3 or more such restarts within 10 minutes      → "keeps restarting" alert, until 10 quiet minutes
   - disk over 85%                                  → alert, cleared under 83%
   - available RAM under 300 MB twice in a row      → alert, cleared over 400 MB
   - a cron job whose last run failed               → one notice per failed run
@@ -18,6 +20,13 @@ from . import config, hermes, push, system
 
 CHECK_EVERY_S = 30
 DOWN_AFTER_S = 120
+# Restarts: one notice per service per half hour; 3 or more in 10 minutes is
+# a crash loop, an alert of its own, cleared after 10 quiet minutes. Found
+# the hard way: a service restarting every 6 s would otherwise have sent a
+# notification on every look.
+RESTART_NOTICE_S = 1800
+LOOP_WINDOW_S = 600
+LOOP_RESTARTS = 3
 DISK_ALERT, DISK_CLEAR = 85.0, 83.0
 RAM_ALERT, RAM_CLEAR = 300 * 2**20, 400 * 2**20
 
@@ -33,6 +42,8 @@ class Watch:
         self.alerts = {}            # key -> {"title", "body", "since"}
         self.down_since = {}        # unit -> first time seen not active
         self.restarts = None        # unit -> NRestarts at the last look
+        self.restart_times = {}     # unit -> when restarts were seen, last 10 minutes
+        self.restart_noticed = {}   # unit -> when the last single-restart notice went out
         self.cron_seen = None       # job id -> last_run_at already reported
         self.low_ram = 0
 
@@ -68,11 +79,25 @@ class Watch:
         counts = {u["unit"]: u["restarts"] for u in units}
         if not first:
             for u in units:
-                before = self.restarts.get(u["unit"])
+                name = u["unit"]
+                before = self.restarts.get(name)
+                recent = [t for t in self.restart_times.get(name, []) if now - t < LOOP_WINDOW_S]
                 if before is not None and u["restarts"] > before:
+                    recent += [now] * (u["restarts"] - before)
                     why = "memoria esaurita (OOM)" if u["result"] == "oom-kill" else (u["result"] or "sconosciuto")
-                    out.append((f"restart:{u['unit']}", f"{u['label']} si è riavviato",
-                                f"systemd ha riavviato {u['unit']} da solo. Motivo: {why}."))
+                    if len(recent) >= LOOP_RESTARTS:
+                        # A crash loop is one problem, not one notice per look.
+                        self._raise(f"loop:{name}", f"{u['label']} continua a ripartire",
+                                    f"{name} si è riavviato {len(recent)} volte in 10 minuti. "
+                                    f"Ultimo motivo: {why}.", now, out)
+                    elif now - self.restart_noticed.get(name, -1e9) >= RESTART_NOTICE_S:
+                        self.restart_noticed[name] = now
+                        out.append((f"restart:{name}", f"{u['label']} si è riavviato",
+                                    f"systemd ha riavviato {name} da solo. Motivo: {why}."))
+                elif not recent and u["state"] == "active":
+                    self._clear(f"loop:{name}", f"{u['label']} è stabile",
+                                f"{name} non si riavvia più da 10 minuti.", out)
+                self.restart_times[name] = recent
         self.restarts = counts
 
         if res:

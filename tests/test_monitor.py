@@ -45,6 +45,25 @@ fresh = Watch()
 assert fresh.evaluate([unit("x", restarts=7)], res(), [], 0) == [], "old restarts reported at startup"
 print("riavvii vecchi all'avvio dell'Hub: silenzio  OK")
 
+# one notice per half hour for occasional restarts
+r = Watch()
+r.evaluate([unit("x")], res(), [], 0)
+assert keys(r.evaluate([unit("x", restarts=1)], res(), [], 30)) == ["restart:x"]
+assert r.evaluate([unit("x", restarts=2)], res(), [], 100) == []
+assert keys(r.evaluate([unit("x", restarts=3)], res(), [], 2000)) == ["restart:x"]
+print("riavvi sporadici: al massimo una notifica ogni 30 minuti  OK")
+
+# a crash loop (found live: a service restarting every 6 s) is one alert
+loop = Watch()
+loop.evaluate([unit("webui")], res(), [], 0)
+ev = loop.evaluate([unit("webui", "activating", restarts=5, result="exit-code")], res(), [], 30)
+assert keys(ev) == ["loop:webui"] and "5 volte" in ev[0][2], ev
+assert loop.evaluate([unit("webui", "activating", restarts=10)], res(), [], 60) == []
+assert loop.evaluate([unit("webui", "active", restarts=12)], res(), [], 90) == []
+ev = loop.evaluate([unit("webui", "active", restarts=12)], res(), [], 700)
+assert keys(ev) == ["loop:webui"] and "stabile" in ev[0][1], ev
+print("ciclo di riavvii: un solo avviso, e uno quando si stabilizza  OK")
+
 # ── disk, with hysteresis ──────────────────────────────────────────
 assert keys(w.evaluate([], res(disk=86), None, 500)) == ["disk"]
 assert w.evaluate([], res(disk=84), None, 530) == []
