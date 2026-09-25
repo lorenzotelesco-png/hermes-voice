@@ -122,7 +122,8 @@ fase 5 aprirebbe tutto.
 6. **Spazio**: rimuovere Ollama (1.9 GB) e i modelli Piper duplicati. Prima va spostata
    la compressione del contesto di Hermes (`auxiliary.compression`), che punta ancora a
    Ollama anche se il servizio è spento: con le sessioni lunghe della fase 1 fallirebbe.
-   *Compressione spostata; Ollama sospeso, vedi punto 10.*
+   *Fatto: compressione spostata, Ollama rimosso. I modelli Piper duplicati se ne vanno
+   con `/root/hermes-voice`, vedi punto 10.*
 
 **Fatto quando**: la voce funziona dallo stesso URL di sempre con prima frase entro +10%
 di oggi (misurata con "Tempi sullo schermo" in Altro); il telefono non deve rifare il
@@ -293,42 +294,63 @@ Ancora aperte:
   nella fase 1.* Fino ad allora resta attivo com'era.
 - **Come integrare Beeper**, vedi fase 4.
 
-## 10. Stato della fase 0 (2026-09-25)
+## 10. Fase 0: completata il 2026-09-25
 
-In produzione dal branch `hub/phase-0`, stesso URL ngrok di prima:
+In produzione da `master`, stesso URL ngrok e stesso login di prima:
 
 - Backend FastAPI in `/opt/hermes-hub` come utente `hermes-hub`, servizio
-  `hermes-hub`; il vecchio `hermes-voice` è disabilitato ma ancora installato in
-  `/root/hermes-voice` come ritorno indietro (`systemctl disable --now hermes-hub &&
-  systemctl enable --now hermes-voice`).
-- Latenza della prima frase, misura alternata sul VPS: 2.86 s con l'Hub contro 2.99 s
-  col vecchio server, cioè pari.
-- Hermes aggiornato da `3513a3b9` (v0.21.0) a `e726b798` (v0.21.5): contract check
-  verde prima e dopo. L'aggiornamento ha aggiunto il toolset `connections` al canale
-  API.
-- Compressione del contesto spostata da Ollama al modello principale.
+  `hermes-hub`, aggiornamenti con `deploy/deploy.sh`. Il vecchio `hermes-voice` è
+  disabilitato ma ancora installato in `/root/hermes-voice` come ritorno indietro
+  (`systemctl disable --now hermes-hub && systemctl enable --now hermes-voice`).
+- L'Hub non aggiunge latenza: 2.86 s contro 2.99 s del vecchio server in misura
+  alternata, e nel log di Hermes la richiesta arriva dall'Hub in pochi millisecondi.
+- Hermes aggiornato da `3513a3b9` (v0.21.0) a `e726b798` (v0.21.5), contract check
+  verde prima e dopo. L'aggiornamento ha aggiunto il toolset `connections` al canale API.
+- Compressione del contesto spostata da Ollama al modello principale; Ollama rimosso.
+- Memoria `memory_tencentdb` riparata in una sessione separata. Era rotta dal 23/09 e
+  bloccava ogni turno per ~1.75 s mentre provava a ripartire.
 
-Resta aperto:
+**Dove va il tempo di un turno vocale**, misurato sul telefono prima delle correzioni
+(11.7 s) e ricostruito dai log del VPS:
 
-- **Prova sul telefono** della voce, con "Tempi sullo schermo": è il criterio di
-  accettazione della fase. Dopo, merge di `hub/phase-0` su `master`.
-- **Ollama non rimosso**: il provider di memoria `memory_tencentdb`, installato il 23/09,
-  lo usa come modello. Quel provider è comunque rotto dal 23/09 (manca `pnpm`, si
-  riavvia di continuo). Va sistemato o sostituito prima di decidere su Ollama.
-- `/root/hermes-voice` (con i 61 MB di modelli Piper duplicati): da cancellare dopo
-  qualche giorno senza bisogno di tornare indietro.
-- Turni lenti: in una prova la prima frase è arrivata a 5.6 s, in tutte le altre tra
-  2.6 e 3.5 s. Da misurare con una domanda che usa `web_search` e una che non lo usa.
-- TASK 24 risulta applicato (`file` e `terminal` nel toolset del canale API).
-- TASK 13: `Credenziali e API.md` sul VPS fuori da git, da verificare.
-- SSH dal PC: la chiave in `Downloads\🔐 Sicurezza\private_key` funziona, ma
-  `~/.ssh/config` punta ancora al vecchio percorso.
+| Passaggio | Prima | Dopo | Note |
+|---|---:|---:|---|
+| Trascrizione (DeepInfra, diretta dal telefono) | 5.8 s | — | dal VPS 2.5-6.6 s su una frase di 4 s; il 6/09 era ~1.4 s |
+| Attesa in Hermes prima del modello | 2.8 s | 0.01 s | dal secondo turno; il primo paga ~3.5 s di avvio della memoria |
+| Modello | 1.2 s | 0.6-1.2 s | |
+| Rete telefono ↔ server | ~0.9 s | ~0.9 s | due andate e ritorni via ngrok |
+| Sintesi della prima frase | 0.65 s | 0.65 s | Edge, lato server |
+
+Dopo le correzioni la prima frase arriva in 0.9-1.0 s dal momento in cui il testo parte
+verso l'Hub; il tempo totale ora dipende soprattutto dalla trascrizione. Groq per la
+trascrizione è stato valutato e scartato dall'utente.
+
+Passa alla fase 1:
+
+- **Il terminale dalla voce si blocca 60 s.** Il modello a volte usa il terminale anche
+  per cose banali (un 12 × 3), le approvazioni sono `manual` con timeout 60 s e il canale
+  vocale non ha modo di approvare: Hermes aspetta, blocca il comando e poi risponde. Lo
+  risolve il foglio di approvazione sul telefono (fase 1, punto 4).
+- Togliere il mirroring su Discord (decisione aperta, punto 9).
+
+Pulizie rimaste, nessuna bloccante:
+
+- `/root/hermes-voice` e il vecchio `hermes-voice.service`: da cancellare dopo qualche
+  giorno senza bisogno di tornare indietro.
+- Disco: 15 GB liberi. L'aggiornamento di Hermes ha occupato circa 3 GB (runtime Python
+  gestito, strumenti browser), più di quanto abbia liberato Ollama.
+- Regole firewall per 8081 e 3000 senza servizi in ascolto.
+- Una trentina di sessioni di prova nella cronologia di Hermes (`ab-…`, `post-update-…`,
+  `post-memfix-…`, `hub-*-test`).
+- `~/.ssh/config` sul PC: il percorso della chiave è corretto e `ssh LORE-SERVER`
+  funziona da Git Bash; l'OpenSSH di Windows rifiuta il file per un permesso rimasto a
+  un utente Windows sconosciuto.
 
 ## Riepilogo
 
 | Fase | Cosa ottieni | Stima |
 |---|---|---|
-| 0 | App privata nella tailnet, backend solido, scheletro della nuova UI | 3-5 gg |
+| 0 | Backend solido, scheletro della nuova UI, Hermes aggiornato — **fatta** | 1 g |
 | 1 | Chat voce + testo con trascrizioni, sessioni di tutti i canali, approvazioni | 4-6 gg |
 | 2 | Stato del server, log, cron, costi, notifiche push | 3-4 gg |
 | 3 | Vault Obsidian e file dal telefono | 3-4 gg |
