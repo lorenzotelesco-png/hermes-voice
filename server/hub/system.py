@@ -15,7 +15,6 @@ LABELS = {
     "hermes-dashboard": "Dashboard",
     "hermes-hub": "Hub (questa app)",
     "ngrok-tunnel": "Tunnel ngrok",
-    "hermes-webui": "Web UI",
     "tailscaled": "Tailscale",
     "warp-svc": "WARP",
     "warp-socks-ts": "Proxy WARP (Fénix)",

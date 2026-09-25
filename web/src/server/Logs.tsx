@@ -11,7 +11,6 @@ const SOURCES: { id: string; label: string }[] = [
   { id: 'unit:hermes-dashboard', label: 'Dashboard (journal)' },
   { id: 'unit:hermes-hub', label: 'Hub (journal)' },
   { id: 'unit:ngrok-tunnel', label: 'Tunnel ngrok (journal)' },
-  { id: 'unit:hermes-webui', label: 'Web UI (journal)' },
   { id: 'unit:warp-svc', label: 'WARP (journal)' },
 ];
 

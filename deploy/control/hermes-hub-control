@@ -24,7 +24,7 @@ import struct
 import subprocess
 import sys
 
-RESTART = {"hermes-agent", "hermes-dashboard", "hermes-webui", "ngrok-tunnel", "warp-svc", "warp-socks-ts"}
+RESTART = {"hermes-agent", "hermes-dashboard", "ngrok-tunnel", "warp-svc", "warp-socks-ts"}
 JOURNAL = RESTART | {"hermes-hub", "tailscaled"}
 MAX_LINES = 300
 CALLER = "hermes-hub"

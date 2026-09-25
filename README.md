@@ -131,7 +131,7 @@ and after `hermes update`.
   `/run/hermes-hub-control.sock` (group `hermes-hub` only) and starts
   `/usr/local/libexec/hermes-hub-control` as root per request. It checks the
   caller is the `hermes-hub` user and keeps its own allowlists (restart:
-  Hermes, dashboard, Web UI, ngrok, WARP; journal: those plus the hub and
+  Hermes, dashboard, ngrok, WARP; journal: those plus the hub and
   Tailscale). `deploy.sh` installs it from the commit fetched from GitHub, not
   from the working tree, which the hub can write. Every restart and cron action
   is in the audit log.
@@ -436,8 +436,8 @@ the transcripts are in the app.
 | `HERMES_DASHBOARD_TOKEN` | *(required)* | Must equal `HERMES_DASHBOARD_SESSION_TOKEN` on the dashboard |
 | `HERMES_API_URL` | `http://127.0.0.1:8642` | Hermes API server. A full `…/v1/chat/completions` URL from older setups also works: only the origin is used |
 | `HERMES_API_KEY` | *(required)* | Bearer token — must equal `API_SERVER_KEY` in `~/.hermes/.env` |
-| `HUB_SERVICES` | Hermes, dashboard, hub, ngrok, Web UI, Tailscale, WARP | Services shown and watched (comma-separated unit names) |
-| `HUB_RESTARTABLE` | Hermes, dashboard, Web UI, ngrok, WARP | Which of them get a restart button; the root helper has its own list and the last word |
+| `HUB_SERVICES` | Hermes, dashboard, hub, ngrok, Tailscale, WARP | Services shown and watched (comma-separated unit names) |
+| `HUB_RESTARTABLE` | Hermes, dashboard, ngrok, WARP | Which of them get a restart button; the root helper has its own list and the last word |
 
 The port (5000) is set in `deploy/hermes-hub.service`, not here.
 
