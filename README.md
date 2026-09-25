@@ -108,9 +108,15 @@ fine-voce 0.00  stt 1.42  frase1 3.10  primo-suono 3.75  frase2 3.81
 
 Read it like this — `stt` is transcription, the gap from there to `frase1` is the
 model, and `primo-suono` minus `frase1` is speech synthesis. **If every `fraseN`
-lands at nearly the same time, the reply was not streamed**: something between
-the server and the phone buffered the whole response. That is a different fault
-from a slow model and needs a different fix.
+of a long reply lands at nearly the same time, the reply was not streamed**:
+something between the server and the phone buffered the whole response. That is
+a different fault from a slow model and needs a different fix. A short reply is
+no evidence either way — the model writes a dozen words in a few tens of
+milliseconds, so its sentences arrive together even when nothing buffers.
+
+To split the `frase1` gap between Hermes and the network, compare with the
+server's own log: `agent.log` records when the turn started, when the model call
+went out, and the model's `latency=`.
 
 **Ending a turn on purpose:** tapping mute while you are talking submits what you
 have said so far. No VAD is right every time — this is the deterministic override
