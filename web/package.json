@@ -10,6 +10,8 @@
   "dependencies": {
     "@fontsource/cormorant-garamond": "^5.3.0",
     "@fontsource/dm-sans": "^5.3.0",
+    "micromark": "^4.0.2",
+    "micromark-extension-gfm": "^3.0.0",
     "preact": "^10.29.8"
   },
   "devDependencies": {

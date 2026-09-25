@@ -1,7 +1,12 @@
-// The voice pipeline: VAD, recording, STT, streamed reply, streamed speech,
-// barge-in. Ported from the old app.js with its behaviour unchanged; the only
-// difference is that it reports state to whoever subscribes instead of
+// The voice pipeline: VAD, recording, STT, streamed speech, barge-in. Ported
+// from the old app.js; it reports state to whoever subscribes instead of
 // touching the DOM, so it can live on while the user is on another tab.
+//
+// The conversation itself belongs to the chat store: a spoken turn is a
+// message in the same Hermes session as the typed ones, and its transcript
+// appears in the thread like any other.
+
+import { chat } from '../chat/store';
 
 export type VoiceState = 'off' | 'calibrating' | 'listening' | 'thinking' | 'speaking';
 
@@ -13,9 +18,6 @@ export interface Snapshot {
 }
 
 type Listener = (s: Snapshot) => void;
-
-const NL = String.fromCharCode(10);
-const SSE_SEP = NL + NL;
 
 const params = new URLSearchParams(location.search);
 const qs = (k: string, d: number) => Number(params.get(k)) || d;
@@ -59,10 +61,6 @@ interface SttDirect {
   base_url: string; api_key: string; language?: string;
 }
 
-function makeSessionId() {
-  return crypto.randomUUID();
-}
-
 function getAudioMime() {
   const types = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', ''];
   return types.find(t => !t || MediaRecorder.isTypeSupported(t)) || '';
@@ -74,29 +72,6 @@ function mimeToExt(mime: string) {
   if (mime.includes('ogg')) return '.ogg';
   if (mime.includes('mpeg')) return '.mp3';
   return '.webm';
-}
-
-// Parse an SSE body incrementally. EventSource cannot be used because the chat
-// call is a POST, so the framing is handled here: events are separated by a
-// blank line, and only "data:" lines carry payload.
-async function* sseEvents(res: Response): AsyncGenerator<any> {
-  const reader = res.body!.getReader();
-  const dec = new TextDecoder();
-  let buf = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let i;
-    while ((i = buf.indexOf(SSE_SEP)) >= 0) {
-      const block = buf.slice(0, i);
-      buf = buf.slice(i + SSE_SEP.length);
-      for (const line of block.split(NL)) {
-        if (!line.startsWith('data:')) continue;
-        try { yield JSON.parse(line.slice(5).trim()); } catch { /* comment or partial */ }
-      }
-    }
-  }
 }
 
 export class VoiceEngine {
@@ -125,8 +100,6 @@ export class VoiceEngine {
   private calibrating = true;
   private calibSamples: number[] = [];
 
-  private history: { role: string; content: string }[] = [];
-  private sessionId: string | null = null;
   // STT settings fetched once per session. Held in memory only — this carries
   // a provider credential and must never reach localStorage or a URL.
   private sttDirect: SttDirect | null = null;
@@ -178,7 +151,6 @@ export class VoiceEngine {
       this.onError('Microfono non disponibile: ' + e.message);
       return;
     }
-    this.sessionId = makeSessionId();
 
     // No custom sampleRate — let Safari use its native rate
     const Ctx = window.AudioContext || (window as any).webkitAudioContext;
@@ -232,8 +204,6 @@ export class VoiceEngine {
     this.currentAudio = null;
     this.isSpeaking = false;
     this.isProcessing = false;
-    this.history = [];
-    this.sessionId = null;
     this.sttDirect = null;
     this.volume = 0;
     this.set({ muted: false });
@@ -260,6 +230,9 @@ export class VoiceEngine {
     // otherwise the recorder about to start would be gated out by it.
     this.isProcessing = false;
     if (this.currentAudio) { try { this.currentAudio.stop(); } catch { /* already ended */ } }
+    // Still writing? Then it is writing for nobody. A turn waiting on an
+    // approval is left alone: that question is answered on the screen.
+    if (chat.snapshot.running && !chat.snapshot.approval) chat.stop();
   }
 
   // ── VAD ─────────────────────────────────────────────────────────
@@ -393,30 +366,13 @@ export class VoiceEngine {
         this.T('stt');
       }
       if (text.length < 2) return;   // silent or noise
-
-      this.history.push({ role: 'user', content: text });
-
-      this.ttsInterrupted = false;
-      const chatRes = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ history: this.history.slice(-8), session_id: this.sessionId }),
-      });
-      if (!chatRes.ok || !chatRes.body) {
-        const err = await chatRes.json().catch(() => ({}));
-        this.onError('Chat: ' + (err.error || chatRes.status));
+      if (chat.snapshot.approval) {
+        this.onError('Prima rispondi alla richiesta sullo schermo');
         return;
       }
 
-      const spoken = await this.speakStream(chatRes);
-      if (!spoken) return;
-      // Record what was actually said, not what was generated. If the user cut
-      // in, the agent should see a truncated turn — otherwise it carries on as
-      // though the whole reply had landed.
-      this.history.push({
-        role: 'assistant',
-        content: this.ttsInterrupted ? spoken + ' [interrotto dall utente]' : spoken,
-      });
+      this.ttsInterrupted = false;
+      await this.speakReply(onSentence => chat.send(text, { voice: true, onSentence }));
     } catch (e: any) {
       this.onError('Errore: ' + e.message);
       console.error(e);
@@ -450,48 +406,38 @@ export class VoiceEngine {
     });
   }
 
-  // Speak the reply as it is written. The server cuts sentences and pushes
-  // them down the stream; each one starts synthesizing the moment it arrives,
-  // so the first word is spoken while the model is still writing the rest.
-  //
-  // Returns the text actually spoken, which is not the full reply when the
-  // user barged in — the agent is told what it managed to say.
-  private async speakStream(res: Response) {
+  // Speak the reply as it is written. The hub cuts sentences and pushes them
+  // down the stream; each one starts synthesizing the moment it arrives, so
+  // the first word is spoken while the model is still writing the rest.
+  private async speakReply(run: (onSentence: (text: string) => void) => Promise<void>) {
     const queue: { text: string; audio: Promise<AudioBuffer> }[] = [];
     // Cast, not annotation: otherwise TS narrows it to null for good and
     // cannot see the assignment made inside the Promise executor below.
     let wake = null as (() => void) | null;
     let producerDone = false;
-    let failed: string | null = null;
     let nSent = 0;
 
-    const producer = (async () => {
-      try {
-        for await (const ev of sseEvents(res)) {
-          if (ev.error) { failed = ev.error; break; }
-          if (ev.done) break;
-          if (!ev.sentence) continue;
-          this.T('frase' + (++nSent));
-          // Synthesis starts here, not at playback time: sentence N+1 is being
-          // fetched while N is still playing.
-          const audio = this.fetchAndDecodeTTS(ev.sentence);
-          audio.catch(() => {});   // handled when its turn to play comes
-          queue.push({ text: ev.sentence, audio });
-          if (wake) { wake(); wake = null; }
-        }
-      } catch (e: any) {
-        failed = e.message;
-      } finally {
-        producerDone = true;
-        if (wake) { wake(); wake = null; }
-      }
-    })();
+    run(text => {
+      this.T('frase' + (++nSent));
+      // Synthesis starts here, not at playback time: sentence N+1 is being
+      // fetched while N is still playing.
+      const audio = this.fetchAndDecodeTTS(text);
+      audio.catch(() => {});   // handled when its turn to play comes
+      queue.push({ text, audio });
+      if (wake) { wake(); wake = null; }
+    }).catch(() => {}).finally(() => {
+      producerDone = true;
+      if (wake) { wake(); wake = null; }
+    });
 
-    const spoken: string[] = [];
     let first = true;
     while (!this.ttsInterrupted && this.active) {
       if (!queue.length) {
         if (producerDone) break;
+        // Between sentences Hermes may be running a tool or waiting on an
+        // approval for a long while: that is thinking, not speaking, and
+        // keeps barge-in from cutting into a turn that is still working.
+        if (!first) this.setState('thinking', 'lavoro...');
         await new Promise<void>(r => (wake = r));
         continue;
       }
@@ -504,14 +450,10 @@ export class VoiceEngine {
         break;
       }
       if (this.ttsInterrupted || !this.active) break;
-      if (first) { this.T('primo-suono'); this.setState('speaking', 'hermes'); first = false; }
+      if (first) { this.T('primo-suono'); first = false; }
+      this.setState('speaking', 'hermes');
       await this.playBuffer(decoded);
-      spoken.push(item.text);
     }
-
-    await producer.catch(() => {});
-    if (failed) this.onError('Chat: ' + failed);
-    return spoken.join(' ');
   }
 }
 

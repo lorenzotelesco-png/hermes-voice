@@ -1,14 +1,15 @@
-# Hermes Voice → Hermes Hub
+# Hermes Hub (formerly Hermes Voice)
 
-A hands-free, always-listening voice assistant web app — like ChatGPT Voice Mode — that runs entirely on your own server and connects to [Hermes Agent](https://github.com/NousResearch/hermes-agent).
+One phone app for [Hermes Agent](https://github.com/NousResearch/hermes-agent),
+running on your own server: talk or type in the same conversation, read the
+transcript of every channel Hermes is on, and answer its approval requests from
+the phone. Server, files and an inbox of your chats come next — the plan is in
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
-Speak → Whisper STT → Hermes Agent → TTS → plays back. No button presses. VAD detects speech automatically.
+Voice is hands-free, like ChatGPT Voice Mode: speak → Whisper STT → Hermes → TTS,
+no button presses, VAD detects speech automatically.
 
 Works as a PWA from iPhone Safari over HTTPS.
-
-The app is growing into **Hermes Hub**: one phone app for talking to Hermes,
-reading transcripts, watching the server and working on files. Voice is the
-first tab; the plan for the rest is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 <img width="1536" height="1024" alt="Hermes Voice" src="https://raw.githubusercontent.com/lorenzotelesco-png/hermes-voice/master/assets/hermes-showcase.svg" />
 
@@ -24,14 +25,21 @@ first tab; the plan for the rest is in [docs/ROADMAP.md](docs/ROADMAP.md).
   sentence, instead of after the model has finished. Synthesis for sentence N+1
   overlaps playback of N.
 - **Barge-in** — the mic stays live while Hermes speaks; start talking and playback
-  stops mid-sentence. The agent is told what it actually managed to say, so it
-  does not carry on as though the whole reply had landed.
+  stops mid-sentence, and a reply still being written is stopped.
+- **One conversation, voice and text** — a spoken turn is a message in the same
+  Hermes session as the typed ones, with its transcript in the thread. Hermes keeps
+  the whole history server-side, not the last few messages.
+- **Every channel's transcripts** — conversations from the app, Discord, the CLI
+  and cron in one list, with full-text search; any of them can be continued.
+- **Approvals on the phone** — when Hermes wants to run a command that needs a
+  yes, a sheet shows the exact command with Approve / Deny.
+- **Turns survive the app leaving the screen** — iOS drops the connection; the
+  hub keeps reading the turn and the app picks it up where it left off.
 - **iOS Safari compatible** — AudioContext unlock, correct `audio/mp4` MIME handling
-- **Discord mirroring** — each voice session creates a Discord thread with full transcript
-- **App shell with tabs** — Chat (voice), Server, File, Altro; a voice session keeps
-  running while you look at another tab
-- **Small frontend** — Preact + TypeScript built with Vite (~11 KB gzipped JS),
-  fonts served by the hub itself, no third-party requests
+- **App shell with tabs** — Chat, Server, File, Altro; a voice session or a
+  running turn keeps going while you look at another tab
+- **Small frontend** — Preact + TypeScript built with Vite (~36 KB gzipped JS,
+  Markdown included), fonts served by the hub itself, no third-party requests
 - **Auto-restart** — systemd services keep everything running across reboots
 - **Fixed HTTPS URL** — ngrok free tier with a permanent subdomain
 
@@ -48,13 +56,13 @@ Hub — FastAPI on 127.0.0.1:5000   (thin proxy + the built app, no speech stack
   │                             so the phone can talk to the STT provider itself
   ├── POST /api/transcribe ──► Hermes dashboard :9119 /api/audio/transcribe ──► text
   │                             (fallback only — see client-direct below)
-  ├── POST /api/chat (SSE) ──► Hermes Agent     :8642 /v1/chat/completions  ──► reply
-  │                             streamed; sentences are cut server-side and pushed
-  │                             to the client one at a time as the model writes
-  │                                  │
-  │                            OpenRouter (deepseek-v4-flash-0731)
-  │                                  │
-  │                             (async) Discord thread mirror
+  ├── POST /api/chat (SSE) ──► Hermes API server :8642 /api/sessions/{id}/chat/stream
+  │                             one turn on a Hermes session; for a voice turn the
+  │                             sentences are cut server-side and pushed as written
+  ├── GET  /api/runs/{id}/events ► the same turn again, from the last event seen
+  ├── POST /api/runs/{id}/approval | stop ► Hermes :8642 /v1/runs/{id}/…
+  ├── GET  /api/sessions[/{id}] ► Hermes :8642 session list and transcript
+  ├── GET  /api/sessions/search ► Hermes dashboard :9119 full-text search
   └── POST /api/tts        ──► Hermes dashboard :9119 /api/audio/speak      ──► audio
 ```
 
@@ -66,10 +74,30 @@ and after `hermes update`.
 
 | Path | What lives there |
 |------|------------------|
-| `server/hub/` | The backend: `main.py` routes, `security.py` access gate, `hermes.py` Hermes clients, `speech.py` sentence cutting, `audit.py` action log |
-| `web/src/voice/engine.ts` | The voice pipeline: VAD, STT, streamed reply and speech, barge-in |
-| `web/src/tabs/` | One component per tab |
+| `server/hub/` | The backend: `main.py` routes, `security.py` access gate, `hermes.py` Hermes clients, `runs.py` turns that outlive the connection, `transcript.py` what the phone is shown of a session, `speech.py` sentence cutting, `audit.py` action log |
+| `web/src/chat/` | The Chat tab: `store.ts` the conversation on screen, thread, conversation list, approval sheet, voice dock |
+| `web/src/voice/engine.ts` | The voice pipeline: VAD, STT, streamed speech, barge-in |
+| `web/src/tabs/` | The other tabs |
 | `deploy/` | systemd units and `deploy.sh` |
+
+### Conversations, turns and approvals
+
+- **Sessions are Hermes'.** The hub sends only the new message; Hermes keeps the
+  history, names the conversation and lists it with every other channel's. The
+  long-term memory scope (`X-Hermes-Session-Key: hermes-voice:pwa`) is the same
+  for every conversation from the app, and unchanged from the voice-only app.
+- **A turn outlives the connection.** The hub reads Hermes' stream into a run
+  (`server/hub/runs.py`) and the phone follows it. Relaying the stream directly
+  would have passed every iOS disconnect upstream, and Hermes interrupts a turn
+  whose client goes away. A finished run is kept 10 minutes for late readers.
+- **Approvals.** `approval.request` events become a sheet with the exact command
+  (redacted by Hermes). The phone can approve once, approve similar commands for
+  the rest of that reply (Hermes scopes "session" to the run on this endpoint),
+  or deny. "Always" is never offered: it would change Hermes' config for every
+  channel. Unanswered, Hermes refuses the command by itself at `approvals.timeout`.
+  Every answer and every stop goes to the audit log with the command.
+- **Voice turns** carry a per-turn instruction for speakable replies; typed turns
+  in the same conversation do not, so they may use Markdown.
 
 **Where things are configured** — this server decides almost nothing:
 
@@ -99,7 +127,7 @@ someone off costs a whole retry, which is far more expensive than the few hundre
 milliseconds a longer pause costs.
 
 **Where the time goes:** turn on "Tempi sullo schermo" in the Altro tab (or add
-`?debug=1`) and a timing strip appears on the voice screen, marking each phase
+`?debug=1`) and a timing strip appears above the voice controls, marking each phase
 from the end of your speech:
 
 ```
@@ -265,13 +293,6 @@ Both must match their counterparts on the Hermes side exactly, or the server
 answers 401. Speech settings (provider, voice, language) are **not** here — they
 live in `~/.hermes/config.yaml`.
 
-Optional Discord mirroring:
-
-```env
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN
-DISCORD_BOT_TOKEN=your_bot_token_here
-```
-
 ### 5. Set up systemd services (auto-restart on reboot)
 
 ```bash
@@ -334,13 +355,14 @@ cloudflared tunnel --url http://127.0.0.1:5000
 1. Open the HTTPS URL in Safari on your iPhone
 2. Tap the Share button → **Add to Home Screen**
 3. Open the app from your home screen (full-screen, no browser chrome)
-4. Tap anywhere to start — then just speak
+4. Type, or tap the microphone and just speak
 
 ---
 
 ## Discord Bot Setup
 
-To enable Discord integration (auto-thread + voice mirroring):
+For Hermes' own Discord channel (its conversations then show up in the hub's
+list like any other):
 
 1. Go to [discord.com/developers](https://discord.com/developers/applications) → New Application
 2. Bot tab → Reset Token → copy the token
@@ -350,10 +372,10 @@ To enable Discord integration (auto-thread + voice mirroring):
    - Send Messages in Threads
    - Read Message History
 4. Invite the bot to your server
-5. Create a webhook in your target channel: Channel Settings → Integrations → Webhooks
-6. Add both values to `.env` (voice server) and `~/.hermes/.env` (Hermes Agent)
+5. Add the token to `~/.hermes/.env` as `DISCORD_BOT_TOKEN`
 
-> **Note**: Hermes Agent handles Discord conversations directly (reads messages, creates threads via `auto_thread: true`). The voice server uses the webhook only to mirror voice session transcripts.
+The hub used to mirror voice sessions into Discord threads. It no longer does:
+the transcripts are in the app.
 
 ---
 
@@ -367,12 +389,8 @@ To enable Discord integration (auto-thread + voice mirroring):
 | `HUB_DB` | `hub.db` in the repo | SQLite file for the audit log (the systemd unit puts it in `/var/lib/hermes-hub`) |
 | `HERMES_DASHBOARD_URL` | `http://127.0.0.1:9119` | Hermes dashboard, serves STT and TTS |
 | `HERMES_DASHBOARD_TOKEN` | *(required)* | Must equal `HERMES_DASHBOARD_SESSION_TOKEN` on the dashboard |
-| `HERMES_API_URL` | `http://127.0.0.1:8642/v1/chat/completions` | Hermes Agent API endpoint |
+| `HERMES_API_URL` | `http://127.0.0.1:8642` | Hermes API server. A full `…/v1/chat/completions` URL from older setups also works: only the origin is used |
 | `HERMES_API_KEY` | *(required)* | Bearer token — must equal `API_SERVER_KEY` in `~/.hermes/.env` |
-| `HERMES_MODEL` | `hermes-agent` | Model name advertised by Hermes on `/v1/models` |
-| `HERMES_MAX_TOKENS` | `800` | Max tokens per reply |
-| `DISCORD_WEBHOOK_URL` | *(disabled)* | Webhook URL for voice session mirroring |
-| `DISCORD_BOT_TOKEN` | *(disabled)* | Bot token for Discord thread creation |
 
 The port (5000) is set in `deploy/hermes-hub.service`, not here.
 
@@ -384,7 +402,7 @@ The port (5000) is set in `deploy/hermes-hub.service`, not here.
 | `API_SERVER_ENABLED` | Must be `true` to expose the local API on port 8642 |
 | `API_SERVER_KEY` | **Required.** Bearer token for the API server — Hermes rejects every request without it, loopback included. Mirror it into this repo's `.env` as `HERMES_API_KEY` |
 | `DEEPINFRA_API_KEY` | DeepInfra key — used for STT (`stt.provider: deepinfra`) |
-| `DISCORD_BOT_TOKEN` | Same bot token as above |
+| `DISCORD_BOT_TOKEN` | Bot token for Hermes' Discord channel |
 
 ---
 

@@ -20,8 +20,6 @@ os.environ.update({
     "VOICE_AUTH_TOKEN": TOKEN,
     "HUB_DB": os.path.join(TMP, "hub.db"),
     "HUB_WEB_DIST": os.path.join(TMP, "dist"),
-    "DISCORD_WEBHOOK_URL": "",
-    "DISCORD_BOT_TOKEN": "",
 })
 
 import httpx  # noqa: E402

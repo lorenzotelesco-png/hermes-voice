@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { JSX } from 'preact';
 import { voice } from './voice/engine';
-import { VoiceTab } from './tabs/VoiceTab';
+import { chat } from './chat/store';
+import { ChatTab } from './chat/ChatTab';
+import { Sessions } from './chat/Sessions';
+import { ApprovalSheet } from './chat/ApprovalSheet';
 import { SoonTab } from './tabs/SoonTab';
 import { MoreTab } from './tabs/MoreTab';
 
@@ -21,40 +24,51 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'altro', label: 'Altro' },
 ];
 
-function currentTab(): TabId {
-  const id = location.hash.replace(/^#\/?/, '') as TabId;
-  return TABS.some(t => t.id === id) ? id : 'chat';
+// #/chat, #/chat/sessioni, #/server ...
+function currentRoute(): { tab: TabId; sub: string } {
+  const [id, sub = ''] = location.hash.replace(/^#\/?/, '').split('/');
+  return TABS.some(t => t.id === id) ? { tab: id as TabId, sub } : { tab: 'chat', sub: '' };
 }
 
 export function App() {
-  const [tab, setTab] = useState<TabId>(currentTab);
+  const [route, setRoute] = useState(currentRoute);
   const [error, setError] = useState<string | null>(null);
-  const [voiceOn, setVoiceOn] = useState(voice.active);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    const onHash = () => setTab(currentTab());
+    const onHash = () => setRoute(currentRoute());
     addEventListener('hashchange', onHash);
     return () => removeEventListener('hashchange', onHash);
   }, []);
 
-  useEffect(() => voice.subscribe(s => setVoiceOn(s.state !== 'off')), []);
+  // Voice on, or Hermes still working: worth a dot on the tab from elsewhere.
+  useEffect(() => {
+    const update = () => setBusy(voice.active || chat.snapshot.running);
+    const a = voice.subscribe(update);
+    const b = chat.subscribe(update);
+    return () => { a(); b(); };
+  }, []);
 
   useEffect(() => {
     let timer: number | undefined;
-    voice.onError = msg => {
+    const show = (msg: string) => {
       setError(msg);
       clearTimeout(timer);
       timer = window.setTimeout(() => setError(null), 6000);
     };
+    voice.onError = show;
+    chat.onError = show;
+    chat.init();
   }, []);
 
+  const { tab, sub } = route;
   return (
     <div class="app">
       {error && <div class="toast" role="alert" onClick={() => setError(null)}>{error}</div>}
       <main class="content">
-        {/* The voice session lives in the engine, not in this component, so
-            leaving the tab does not end the conversation. */}
-        {tab === 'chat' && <VoiceTab />}
+        {/* The voice session lives in the engine and the conversation in the
+            store, not in these components: leaving the tab ends neither. */}
+        {tab === 'chat' && (sub === 'sessioni' ? <Sessions /> : <ChatTab />)}
         {tab === 'server' && (
           <SoonTab title="Server" phase={2}>
             Stato dei servizi, CPU, RAM e disco, log, cron, costi e notifiche quando qualcosa si ferma.
@@ -73,10 +87,11 @@ export function App() {
              aria-current={tab === t.id ? 'page' : undefined}>
             <svg viewBox="0 0 24 24" aria-hidden="true">{ICONS[t.id]}</svg>
             <span>{t.label}</span>
-            {t.id === 'chat' && voiceOn && tab !== 'chat' && <i class="live-dot" title="Conversazione attiva" />}
+            {t.id === 'chat' && busy && tab !== 'chat' && <i class="live-dot" title="Hermes è attivo" />}
           </a>
         ))}
       </nav>
+      <ApprovalSheet />
     </div>
   );
 }

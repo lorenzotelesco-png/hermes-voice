@@ -2,27 +2,39 @@
 
     uvicorn hub.main:app --app-dir server --host 127.0.0.1 --port 5000
 
-Phase 0 serves the voice pipeline plus the new app shell. The routes are the
-old voice routes moved under /api.
+Phase 1: one conversation for voice and text on Hermes' own sessions, every
+channel's transcripts, and approvals answered from the phone.
 """
+import asyncio
 import base64
-import json
+import re
+import time
 
 from fastapi import FastAPI, File, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
-from . import audit, config, discord_mirror, hermes, security
-from .speech import clean_for_tts, sse, take_sentence
+from . import audit, config, hermes, runs, security, transcript
+from .speech import sse
 
 app = FastAPI(title="Hermes Hub", docs_url=None, redoc_url=None, openapi_url=None)
+# A long transcript is ~100 KB of JSON, which the link from China to the
+# server takes over a second to carry; compressed it is a fifth of that.
+# Starlette never compresses text/event-stream, which must flush as it goes.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 for line in config.warnings():
     print("WARNING:", line)
-print("Discord mirroring:", "enabled" if discord_mirror.enabled() else "disabled")
 
 
 def error(message, status):
     return JSONResponse({"error": message}, status_code=status)
+
+
+@app.exception_handler(hermes.HermesError)
+async def hermes_error(request: Request, exc: hermes.HermesError):
+    print(f"[HERMES ERROR] {request.method} {request.url.path}: {exc}")
+    return error(str(exc), exc.status)
 
 
 @app.middleware("http")
@@ -126,74 +138,168 @@ VOICE_SYSTEM_PROMPT = (
     "Sii conciso: massimo 2-3 frasi per risposta, salvo quando l'utente chiede esplicitamente dettagli."
 )
 
+# Hermes session ids seen so far: uuids, api_<ts>_<hex>, dated gateway ids.
+# Anything else is refused before it can reach a URL.
+SESSION_ID = re.compile(r"^[A-Za-z0-9_.:@-]{1,160}$")
+RUN_ID = re.compile(r"^run_[0-9a-f]{32}$")
+MAX_MESSAGE_CHARS = 20000
+
+
+def _session_id(value):
+    if not isinstance(value, str) or not SESSION_ID.match(value):
+        raise hermes.HermesError("invalid session id", status=400)
+    return value
+
+
+def _run_id(value):
+    if not RUN_ID.match(value):
+        raise hermes.HermesError("invalid run id", status=400)
+    return value
+
+
+@app.get("/api/sessions")
+async def sessions(limit: int = 30, offset: int = 0):
+    data = await hermes.api_request("GET", "/api/sessions", params={
+        "limit": min(max(limit, 1), 100), "offset": max(offset, 0)})
+    return {"sessions": [transcript.session(s) for s in data.get("data") or []],
+            "has_more": bool(data.get("has_more"))}
+
+
+@app.get("/api/sessions/search")
+async def search(q: str = ""):
+    q = q.strip()
+    if len(q) < 2:
+        return {"results": []}
+    data = await hermes.dashboard_get("/api/sessions/search", params={"q": q[:200]})
+    # One hit per conversation: the list is for finding it, the thread shows the rest.
+    hits, seen = [], set()
+    for raw in data.get("results") or []:
+        hit = transcript.search_hit(raw)
+        if hit["session_id"] and hit["session_id"] not in seen:
+            seen.add(hit["session_id"])
+            hits.append(hit)
+    return {"results": hits[:40]}
+
+
+@app.get("/api/sessions/{session_id}")
+async def session_thread(session_id: str):
+    sid = hermes.seg(_session_id(session_id))
+    meta, messages = await asyncio.gather(
+        hermes.api_request("GET", f"/api/sessions/{sid}"),
+        hermes.api_request("GET", f"/api/sessions/{sid}/messages", params={"limit": 300}))
+    return {"session": transcript.session(meta.get("session") or {}),
+            "items": transcript.items(messages.get("data") or [])}
+
 
 @app.post("/api/chat")
 async def chat(request: Request):
     body = await request.json()
-    history = body.get("history") or []
-    session_id = body.get("session_id")
-    user_text = history[-1]["content"] if history else ""
-    audit.record("pwa", "chat", f"session={session_id} chars={len(user_text)}")
+    message = (body.get("message") or "").strip()
+    if not message:
+        return error("message required", 400)
+    if len(message) > MAX_MESSAGE_CHARS:
+        return error("message too long", 413)
+    voice = bool(body.get("voice"))
+    if body.get("session_id"):
+        session_id = _session_id(body["session_id"])
+    else:
+        # Created here rather than by the phone: one round trip less on the
+        # first turn, which is the one that feels slow.
+        created = await hermes.api_request("POST", "/api/sessions", payload={})
+        session_id = created["session"]["id"]
+    audit.record("pwa", "chat", f"session={session_id} chars={len(message)} voice={voice}")
+    run = await runs.start(session_id, message, voice, VOICE_SYSTEM_PROMPT if voice else None)
+    return event_stream(run)
 
-    messages = [{"role": "system", "content": VOICE_SYSTEM_PROMPT}] + history
+
+@app.get("/api/runs/{run_id}/events")
+async def run_events(run_id: str, after: int = -1):
+    run = runs.get(_run_id(run_id))
+    if not run:
+        # Finished long ago or the hub restarted: the transcript has the result.
+        return error("run not found", 404)
+    return event_stream(run, after)
+
+
+# "always" is left out on purpose: a permanent approval changes Hermes'
+# config for every channel, which is not a decision for a phone notification.
+APPROVAL_CHOICES = {"once", "session", "deny"}
+
+
+@app.post("/api/runs/{run_id}/approval")
+async def approval(run_id: str, request: Request):
+    run_id = _run_id(run_id)
+    body = await request.json()
+    choice, request_id = body.get("choice"), body.get("request_id")
+    if choice not in APPROVAL_CHOICES:
+        return error("choice must be once, session or deny", 400)
+    payload = {"choice": choice}
+    if request_id is not None:
+        if not isinstance(request_id, str) or not 0 < len(request_id) <= 256:
+            return error("invalid request_id", 400)
+        payload["request_id"] = request_id
+    run = runs.get(run_id)
+    command = next((e["command"] for e in reversed(run.events) if e["type"] == "approval"
+                    and e.get("request_id") == request_id), "") if run else ""
+    detail = f"run={run_id} choice={choice} command={command[:160]!r}"
     try:
-        c, upstream = await hermes.open_chat_stream(messages, session_id)
-    except hermes.HermesError as e:
-        print(f"[CHAT ERROR] {e}")
-        return error(str(e), e.status)
+        await hermes.api_request("POST", f"/v1/runs/{hermes.seg(run_id)}/approval", payload=payload)
+    except hermes.HermesError:
+        audit.record("pwa", "approval", detail, ok=False)
+        raise
+    audit.record("pwa", "approval", detail)
+    if run:
+        run.push("approval_done", request_id=request_id, choice=choice)
+    return {"ok": True, "choice": choice}
 
+
+@app.post("/api/runs/{run_id}/stop")
+async def stop(run_id: str):
+    run_id = _run_id(run_id)
+    result = await hermes.api_request("POST", f"/v1/runs/{hermes.seg(run_id)}/stop", payload={})
+    audit.record("pwa", "stop", f"run={run_id}")
+    return {"ok": True, "status": result.get("status")}
+
+
+# Text arrives a few characters at a time. Padding every piece past ngrok's
+# buffer would cost 2KB per token; padding only what must be seen now (a
+# sentence to speak, a tool, an approval, the end), and otherwise at most every
+# quarter second, keeps the thread live for a fraction of the bytes.
+FLUSH_EVERY_S = 0.25
+KEEPALIVE_S = 15
+
+
+def _merge_deltas(batch):
+    out = []
+    for ev in batch:
+        if ev["type"] == "delta" and out and out[-1]["type"] == "delta":
+            out[-1] = {**ev, "text": out[-1]["text"] + ev["text"]}
+        else:
+            out.append(ev)
+    return out
+
+
+def event_stream(run, after=-1):
     async def generate():
-        buf, full, event, n_sent = "", "", "", 0
-        try:
-            async for line in upstream.aiter_lines():
-                line = line.strip()
-                if not line:
-                    event = ""          # a blank line closes an SSE event
-                    continue
-                if line.startswith("event:"):
-                    event = line[6:].strip()
-                    continue
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                # Hermes emits event: hermes.tool.progress for tool-start UX.
-                # It is not reply text and must never reach the speaker.
-                if event and event != "message":
-                    continue
-                try:
-                    chunk = json.loads(data)
-                except ValueError:
-                    continue
-                delta = (chunk.get("choices") or [{}])[0].get("delta", {}).get("content")
-                if not delta:
-                    continue
-                full += delta
-                buf += delta
-                while True:
-                    sentence, buf = take_sentence(buf, first=(n_sent == 0))
-                    if not sentence:
-                        break
-                    spoken = clean_for_tts(sentence)
-                    if spoken:
-                        n_sent += 1
-                        yield sse({"sentence": spoken})
-
-            # Whatever never reached a sentence boundary is said anyway, or a
-            # reply that ends without punctuation is silently dropped.
-            tail = clean_for_tts(buf)
-            if tail:
-                yield sse({"sentence": tail})
-            print(f"[HERMES] {full[:80]!r}")
-            discord_mirror.mirror(user_text, full, session_id)
-            yield sse({"done": True, "reply": clean_for_tts(full)})
-        except Exception as e:
-            print(f"[CHAT STREAM ERROR] {e}")
-            yield sse({"error": str(e)})
-        finally:
-            await upstream.aclose()
-            await c.aclose()
+        last_pad = last_write = time.monotonic()
+        unflushed = False
+        async for batch in run.follow(after, keepalive=FLUSH_EVERY_S):
+            now = time.monotonic()
+            if not batch:
+                if unflushed:
+                    yield sse({"type": "flush"})
+                    unflushed, last_pad, last_write = False, now, now
+                elif now - last_write >= KEEPALIVE_S:
+                    yield ": keepalive\n\n"
+                    last_write = now
+                continue
+            events = _merge_deltas(batch)
+            pad = any(e["type"] != "delta" for e in events) or now - last_pad >= FLUSH_EVERY_S
+            yield sse(events[0], pad=pad) + "".join(sse(e, pad=False) for e in events[1:])
+            last_write = now
+            if pad:
+                last_pad = now
+            unflushed = not pad
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers={
         "Cache-Control": "no-cache",

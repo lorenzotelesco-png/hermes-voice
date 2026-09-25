@@ -51,12 +51,11 @@ def clean_for_tts(text):
 
 
 # ngrok's free tier would not reliably flush a small chunk: the same payload
-# streamed correctly one run and arrived as one 42ms burst the next. Every event
-# was padded past the buffer threshold with an SSE comment (ignored by every
-# parser). tailscale serve should flush event streams on its own; the padding
-# stays until a timed comparison on the phone shows it is safe to drop.
+# streamed correctly one run and arrived as one 42ms burst the next. An event
+# that must arrive now is padded past the buffer threshold with an SSE comment
+# (ignored by every parser), which also pushes out anything queued before it.
 _FLUSH_PAD = ": " + (" " * 2048) + "\n"
 
 
-def sse(payload):
-    return _FLUSH_PAD + "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+def sse(payload, pad=True):
+    return (_FLUSH_PAD if pad else "") + "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
