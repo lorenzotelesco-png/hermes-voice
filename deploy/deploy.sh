@@ -11,7 +11,7 @@ cd "$APP"
 as_hub git fetch -q origin
 as_hub git checkout -q "$BRANCH"
 as_hub git pull -q --ff-only origin "$BRANCH"
-echo "codice: $(git log -1 --format='%h %s')"
+echo "codice: $(as_hub git log -1 --format='%h %s')"
 
 as_hub venv/bin/pip install -q -r requirements.txt
 (cd web && as_hub npm ci --silent --no-audit --no-fund && as_hub npm run build --silent >/dev/null)
