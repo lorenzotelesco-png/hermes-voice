@@ -1,52 +1,72 @@
-import io, os, sys, json, types
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "server"))
-os.environ["HERMES_API_KEY"] = "test-key"
-os.environ["HERMES_DASHBOARD_TOKEN"] = "test-dash"
-os.environ["VOICE_AUTH_TOKEN"] = "test-auth"
+"""SSE framing, incremental sentence cutting, and tool progress never reaching the speaker."""
+import json
 
-import urllib.request
-import app as srv
+import _setup
+import httpx
 
 NL = chr(10)
 
-class FakeUpstream:
-    """Finge la risposta SSE di Hermes: delta a pezzi + un evento tool-progress."""
-    def __init__(self, lines): self._lines = lines; self.closed = False
-    def __iter__(self):
-        for l in self._lines: yield (l + NL).encode()
-    def close(self): self.closed = True
 
-def make_stream():
-    def d(txt):
-        return "data: " + json.dumps({"choices":[{"delta":{"content":txt}}]})
-    return [
-        "event: hermes.tool.progress",
-        'data: {"tool":"web_search"}',       # NON deve finire nel parlato
-        "",
-        d("Certo. "), "",
-        d("Il meteo a Milano "), "",
-        d("oggi e sereno. "), "",
-        d("Massima 22 gradi."), "",
-        "data: [DONE]", "",
-    ]
+def d(txt):
+    return "data: " + json.dumps({"choices": [{"delta": {"content": txt}}]})
 
-srv.urllib.request.urlopen = lambda req, timeout=None: FakeUpstream(make_stream())
 
-c = srv.app.test_client()
-r = c.post("/chat?k=test-auth", json={"history":[{"role":"user","content":"che tempo fa?"}],
-                          "session_id":"t1"})
-print("status:", r.status_code, "| content-type:", r.headers.get("Content-Type"))
-print("X-Accel-Buffering:", r.headers.get("X-Accel-Buffering"))
-body = r.get_data(as_text=True)
-events = [json.loads(l[5:].strip()) for l in body.split(NL) if l.startswith("data:")]
-print()
+STREAM = [
+    "event: hermes.tool.progress",
+    'data: {"tool":"web_search"}',       # must NOT end up spoken
+    "",
+    d("Certo. "), "",
+    d("Il meteo a Milano "), "",
+    d("oggi e sereno. "), "",
+    d("Massima 22 gradi."), "",
+    "data: [DONE]", "",
+]
+
+seen = {}
+
+
+def hermes_api(req):
+    seen["url"] = str(req.url)
+    seen["auth"] = req.headers.get("authorization")
+    seen["session"] = req.headers.get("x-hermes-session-id")
+    seen["body"] = json.loads(req.content)
+    return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                          content=(NL.join(STREAM) + NL).encode())
+
+
+_setup.mock(hermes_api)
+c = _setup.signed_in_client()
+r = c.post("/api/chat", json={"history": [{"role": "user", "content": "che tempo fa?"}],
+                              "session_id": "t1"})
+print("status:", r.status_code, "| content-type:", r.headers.get("content-type"))
+assert r.status_code == 200
+assert r.headers.get("x-accel-buffering") == "no"
+
+events = [json.loads(l[5:].strip()) for l in r.text.split(NL) if l.startswith("data:")]
 for e in events:
-    if "sentence" in e: print("  FRASE:", repr(e["sentence"]))
-    elif e.get("done"): print("  DONE  :", repr(e["reply"]))
-    else: print("  ALTRO :", e)
+    if "sentence" in e:
+        print("  FRASE:", repr(e["sentence"]))
+    elif e.get("done"):
+        print("  DONE  :", repr(e["reply"]))
+    else:
+        print("  ALTRO :", e)
 
-assert not any("web_search" in json.dumps(e) for e in events), "tool progress e finito nello stream!"
-assert sum(1 for e in events if "sentence" in e) >= 2, "frasi non emesse"
-assert events[-1].get("done") is True, "manca l'evento done"
+assert not any("web_search" in json.dumps(e) for e in events), "tool progress reached the stream!"
+assert sum(1 for e in events if "sentence" in e) >= 2, "sentences not emitted"
+assert events[-1].get("done") is True, "missing done event"
+
+assert seen["auth"] == "Bearer k-agent", seen["auth"]
+assert seen["session"] == "t1", seen["session"]
+assert seen["body"]["stream"] is True
+assert seen["body"]["messages"][0]["role"] == "system", "voice system prompt missing"
+assert seen["body"]["messages"][-1]["content"] == "che tempo fa?"
+print("  bearer, session header, system prompt  OK")
+
+# Hermes rejecting the key must read as a key problem, not a generic failure.
+_setup.mock(lambda req: httpx.Response(401, text='{"error":"unauthorized"}'))
+r = c.post("/api/chat", json={"history": [{"role": "user", "content": "x"}]})
+assert r.status_code == 502 and "HERMES_API_KEY" in r.json()["error"], r.text
+print("  401 da Hermes -> messaggio sulla chiave  OK")
+
 print()
-print("OK: tool-progress filtrato, frasi emesse in streaming, done presente")
+print("OK: tool-progress filtrato, frasi in streaming, done presente, errori leggibili")

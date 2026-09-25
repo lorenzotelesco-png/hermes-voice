@@ -1,10 +1,14 @@
-# Hermes Voice
+# Hermes Voice → Hermes Hub
 
 A hands-free, always-listening voice assistant web app — like ChatGPT Voice Mode — that runs entirely on your own server and connects to [Hermes Agent](https://github.com/NousResearch/hermes-agent).
 
-Speak → Whisper STT → Hermes Agent → Piper TTS → plays back. No button presses. VAD detects speech automatically.
+Speak → Whisper STT → Hermes Agent → TTS → plays back. No button presses. VAD detects speech automatically.
 
 Works as a PWA from iPhone Safari over HTTPS.
+
+The app is growing into **Hermes Hub**: one phone app for talking to Hermes,
+reading transcripts, watching the server and working on files. Voice is the
+first tab; the plan for the rest is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 <img width="1536" height="1024" alt="Hermes Voice" src="https://raw.githubusercontent.com/lorenzotelesco-png/hermes-voice/master/assets/hermes-showcase.svg" />
 
@@ -24,7 +28,10 @@ Works as a PWA from iPhone Safari over HTTPS.
   does not carry on as though the whole reply had landed.
 - **iOS Safari compatible** — AudioContext unlock, correct `audio/mp4` MIME handling
 - **Discord mirroring** — each voice session creates a Discord thread with full transcript
-- **Zero frontend dependencies** — pure Web Audio API, no npm, no build step
+- **App shell with tabs** — Chat (voice), Server, File, Altro; a voice session keeps
+  running while you look at another tab
+- **Small frontend** — Preact + TypeScript built with Vite (~11 KB gzipped JS),
+  fonts served by the hub itself, no third-party requests
 - **Auto-restart** — systemd services keep everything running across reboots
 - **Fixed HTTPS URL** — ngrok free tier with a permanent subdomain
 
@@ -36,23 +43,33 @@ Works as a PWA from iPhone Safari over HTTPS.
 iPhone (Safari PWA)
   │  HTTPS (ngrok tunnel)
   ▼
-Flask server — port 5000          (thin proxy + static PWA, no speech stack)
-  ├── GET  /voice-config ► Hermes dashboard :9119 /api/audio/voice-config
-  │                         so the phone can talk to the STT provider itself
-  ├── POST /transcribe ──► Hermes dashboard :9119 /api/audio/transcribe ──► text
-  │                         (fallback only — see client-direct below)
-  ├── POST /chat  (SSE) ─► Hermes Agent     :8642 /v1/chat/completions  ──► reply
-  │                         streamed; sentences are cut server-side and pushed
-  │                         to the client one at a time as the model writes
-  │                              │
-  │                        OpenRouter (deepseek-v4-flash-0731)
-  │                              │
-  │                         (async) Discord thread mirror
-  └── POST /tts        ──► Hermes dashboard :9119 /api/audio/speak      ──► audio
+Hub — FastAPI on 127.0.0.1:5000   (thin proxy + the built app, no speech stack)
+  ├── GET  /api/voice-config ► Hermes dashboard :9119 /api/audio/voice-config
+  │                             so the phone can talk to the STT provider itself
+  ├── POST /api/transcribe ──► Hermes dashboard :9119 /api/audio/transcribe ──► text
+  │                             (fallback only — see client-direct below)
+  ├── POST /api/chat (SSE) ──► Hermes Agent     :8642 /v1/chat/completions  ──► reply
+  │                             streamed; sentences are cut server-side and pushed
+  │                             to the client one at a time as the model writes
+  │                                  │
+  │                            OpenRouter (deepseek-v4-flash-0731)
+  │                                  │
+  │                             (async) Discord thread mirror
+  └── POST /api/tts        ──► Hermes dashboard :9119 /api/audio/speak      ──► audio
 ```
 
 Both dashboard calls authenticate with `X-Hermes-Session-Token`; the dashboard is
-bound to loopback, so nothing but this server can reach it.
+bound to loopback, so nothing but this server can reach it. Every call to Hermes
+goes through `server/hub/hermes.py`, and `scripts/contract_check.py` checks that
+each endpoint the hub uses still answers in the expected shape — run it before
+and after `hermes update`.
+
+| Path | What lives there |
+|------|------------------|
+| `server/hub/` | The backend: `main.py` routes, `security.py` access gate, `hermes.py` Hermes clients, `speech.py` sentence cutting, `audit.py` action log |
+| `web/src/voice/engine.ts` | The voice pipeline: VAD, STT, streamed reply and speech, barge-in |
+| `web/src/tabs/` | One component per tab |
+| `deploy/` | systemd units and `deploy.sh` |
 
 **Where things are configured** — this server decides almost nothing:
 
@@ -61,9 +78,9 @@ bound to loopback, so nothing but this server can reach it.
 | LLM, reasoning effort | `~/.hermes/config.yaml` → `model`, `agent.reasoning_effort` |
 | STT provider, language | `~/.hermes/config.yaml` → `stt` |
 | TTS provider, voice | `~/.hermes/config.yaml` → `tts` |
-| Endpointing, VAD, barge-in | `web/app.js` (client-side) |
+| Endpointing, VAD, barge-in | `web/src/voice/engine.ts` (client-side) |
 
-**Client tuning** (top of `web/app.js`):
+**Client tuning** (top of `web/src/voice/engine.ts`):
 
 All tunable live from the phone via query string, no redeploy — e.g.
 `?silence=1200&cont=1.2`.
@@ -81,8 +98,9 @@ All tunable live from the phone via query string, no redeploy — e.g.
 someone off costs a whole retry, which is far more expensive than the few hundred
 milliseconds a longer pause costs.
 
-**Where the time goes:** add `?debug=1` and a timing strip appears at the bottom
-of the screen, marking each phase from the end of your speech:
+**Where the time goes:** turn on "Tempi sullo schermo" in the Altro tab (or add
+`?debug=1`) and a timing strip appears on the voice screen, marking each phase
+from the end of your speech:
 
 ```
 fine-voce 0.00  stt 1.42  frase1 3.10  primo-suono 3.75  frase2 3.81
@@ -90,9 +108,15 @@ fine-voce 0.00  stt 1.42  frase1 3.10  primo-suono 3.75  frase2 3.81
 
 Read it like this — `stt` is transcription, the gap from there to `frase1` is the
 model, and `primo-suono` minus `frase1` is speech synthesis. **If every `fraseN`
-lands at nearly the same time, the reply was not streamed**: something between
-the server and the phone buffered the whole response. That is a different fault
-from a slow model and needs a different fix.
+of a long reply lands at nearly the same time, the reply was not streamed**:
+something between the server and the phone buffered the whole response. That is
+a different fault from a slow model and needs a different fix. A short reply is
+no evidence either way — the model writes a dozen words in a few tens of
+milliseconds, so its sentences arrive together even when nothing buffers.
+
+To split the `frase1` gap between Hermes and the network, compare with the
+server's own log: `agent.log` records when the turn started, when the model call
+went out, and the model's `latency=`.
 
 **Ending a turn on purpose:** tapping mute while you are talking submits what you
 have said so far. No VAD is right every time — this is the deterministic override
@@ -124,10 +148,16 @@ and cuts it off immediately — if that happens, raise `BARGE_IN_MULT`.
 
 ### 1. Clone the repo
 
+The hub runs as its own unprivileged user out of `/opt/hermes-hub`:
+
 ```bash
-git clone https://github.com/lorenzotelesco-png/hermes-voice
-cd hermes-voice
-pip install -r requirements.txt
+useradd --system --home-dir /var/lib/hermes-hub --create-home --shell /usr/sbin/nologin hermes-hub
+git clone https://github.com/lorenzotelesco-png/hermes-voice /opt/hermes-hub
+chown -R hermes-hub:hermes-hub /opt/hermes-hub
+cd /opt/hermes-hub
+sudo -u hermes-hub python3 -m venv venv
+sudo -u hermes-hub venv/bin/pip install -r requirements.txt
+cd web && sudo -u hermes-hub npm ci && sudo -u hermes-hub npm run build   # Node 20.19+ or 22.12+
 ```
 
 ### 2. Enable the Hermes dashboard (speech in/out)
@@ -215,16 +245,18 @@ session_reset:
   at_hour: 4
 ```
 
-### 4. Configure the voice server
+### 4. Configure the hub
 
 ```bash
 cp .env.example .env
+chown hermes-hub:hermes-hub .env && chmod 600 .env
 nano .env
 ```
 
 Minimum required:
 
 ```env
+VOICE_AUTH_TOKEN=<openssl rand -hex 32>
 HERMES_API_KEY=<same value as API_SERVER_KEY in ~/.hermes/.env>
 HERMES_DASHBOARD_TOKEN=<same value as HERMES_DASHBOARD_SESSION_TOKEN>
 ```
@@ -246,7 +278,7 @@ DISCORD_BOT_TOKEN=your_bot_token_here
 # Copy service files
 cp deploy/hermes-agent.service /etc/systemd/system/
 cp deploy/hermes-dashboard.service /etc/systemd/system/
-cp deploy/hermes-voice.service /etc/systemd/system/
+cp deploy/hermes-hub.service /etc/systemd/system/
 cp deploy/ngrok-tunnel.service /etc/systemd/system/   # optional
 
 # Edit paths and keys in hermes-agent.service
@@ -256,7 +288,7 @@ nano /etc/systemd/system/hermes-agent.service
 systemctl daemon-reload
 systemctl enable --now hermes-agent
 systemctl enable --now hermes-dashboard
-systemctl enable --now hermes-voice
+systemctl enable --now hermes-hub
 systemctl enable --now ngrok-tunnel   # optional
 ```
 
@@ -264,9 +296,13 @@ Check status:
 
 ```bash
 systemctl status hermes-agent
-systemctl status hermes-voice
-journalctl -u hermes-voice -f
+systemctl status hermes-hub
+journalctl -u hermes-hub -f
+python3 /opt/hermes-hub/scripts/contract_check.py
 ```
+
+To update later, as root: `/opt/hermes-hub/deploy/deploy.sh` — it pulls, installs,
+builds the app, restarts the hub and runs the contract check.
 
 ### 6. Expose over HTTPS (required for microphone on mobile)
 
@@ -323,11 +359,12 @@ To enable Discord integration (auto-thread + voice mirroring):
 
 ## Environment Variables
 
-### Voice server (`.env`)
+### Hub (`.env`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VOICE_AUTH_TOKEN` | *(required)* | Access token. The server refuses everything with 503 until it is set |
+| `HUB_DB` | `hub.db` in the repo | SQLite file for the audit log (the systemd unit puts it in `/var/lib/hermes-hub`) |
 | `HERMES_DASHBOARD_URL` | `http://127.0.0.1:9119` | Hermes dashboard, serves STT and TTS |
 | `HERMES_DASHBOARD_TOKEN` | *(required)* | Must equal `HERMES_DASHBOARD_SESSION_TOKEN` on the dashboard |
 | `HERMES_API_URL` | `http://127.0.0.1:8642/v1/chat/completions` | Hermes Agent API endpoint |
@@ -336,7 +373,8 @@ To enable Discord integration (auto-thread + voice mirroring):
 | `HERMES_MAX_TOKENS` | `800` | Max tokens per reply |
 | `DISCORD_WEBHOOK_URL` | *(disabled)* | Webhook URL for voice session mirroring |
 | `DISCORD_BOT_TOKEN` | *(disabled)* | Bot token for Discord thread creation |
-| `PORT` | `5000` | Flask server port |
+
+The port (5000) is set in `deploy/hermes-hub.service`, not here.
 
 ### Hermes Agent (`~/.hermes/.env`)
 
@@ -369,11 +407,15 @@ web:
 
 **"Gateway already running"** — a second gateway is up, typically a *user* unit (`systemctl --user status hermes-gateway`) alongside the system one. Pick one and disable the other, or they fight over the port on every boot.
 
-**`/chat` returns 401/403** — `HERMES_API_KEY` in this repo's `.env` must equal `API_SERVER_KEY` in `~/.hermes/.env`. Hermes requires this token on every deployment, loopback included.
+**`/api/chat` returns 502 mentioning `HERMES_API_KEY`** — `HERMES_API_KEY` in this repo's `.env` must equal `API_SERVER_KEY` in `~/.hermes/.env`. Hermes requires this token on every deployment, loopback included.
 
-**`/transcribe` or `/tts` returns 401** — `HERMES_DASHBOARD_TOKEN` must equal `HERMES_DASHBOARD_SESSION_TOKEN` in the dashboard's environment. If that variable was never set, the dashboard picked a random token at boot: set it in `~/.hermes/.env`, then `systemctl restart hermes-dashboard`.
+**`/api/transcribe` or `/api/tts` returns 502 mentioning the session token** — `HERMES_DASHBOARD_TOKEN` must equal `HERMES_DASHBOARD_SESSION_TOKEN` in the dashboard's environment. If that variable was never set, the dashboard picked a random token at boot: set it in `~/.hermes/.env`, then `systemctl restart hermes-dashboard`.
 
-**`/transcribe` or `/tts` returns 503** — the dashboard is not running. `systemctl status hermes-dashboard`, and check the `web` extra is installed.
+**`/api/transcribe` or `/api/tts` returns 503** — the dashboard is not running. `systemctl status hermes-dashboard`, and check the `web` extra is installed.
+
+**The app shows an old version** — "Altro" shows the commit and build time. `index.html` is never cached, so a stale version means the build did not run: `cd web && npm run build`, or use `deploy/deploy.sh`.
+
+**Something broke after `hermes update`** — `python3 scripts/contract_check.py` names the endpoint and the missing field.
 
 **No audio comes back** — the TTS provider is failing on the Hermes side, not here. Check `tts.provider` in `~/.hermes/config.yaml` and `journalctl -u hermes-dashboard -n 50`.
 
@@ -418,7 +460,7 @@ Measured from a phone that cost ~3.4s against ~1.4s of actual transcription: mos
 of it was carriage, not inference.
 
 When the configured STT provider is reachable from a browser, the phone now uploads
-straight to it and only the transcript comes back. `GET /voice-config` proxies the
+straight to it and only the transcript comes back. `GET /api/voice-config` proxies the
 dashboard's resolved settings, so `config.yaml` stays the single source of truth —
 the client decides nothing, it just stops being a relay.
 
@@ -438,7 +480,7 @@ ran is never a guess.
 
 The tunnel URL is public, and the agent behind it can search the web, read
 memory and spend API credits — an open URL is an open agent. Every route except
-`/health` requires a token.
+`/health` and `/api/health` requires a token.
 
 ```bash
 echo "VOICE_AUTH_TOKEN=$(openssl rand -hex 32)" >> .env
@@ -462,6 +504,14 @@ change.
 request rather than serving an open agent: a control that silently allows
 everything when misconfigured is worse than none, because it looks protected.
 
+**Requests that change something must come from the app's own page.** A signed-in
+phone that opens some other website must not be usable to post here on its
+behalf, so POSTs carrying another site's `Origin` or `Sec-Fetch-Site: cross-site`
+are refused. There is no CORS: the only client is the app itself.
+
+The hub moved from Flask to FastAPI with the same cookie name and signature, so a
+phone signed in to the old server stays signed in.
+
 This is a single shared secret, appropriate for one person's assistant. It is
 not user accounts, and it does not rotate on its own.
 
@@ -469,12 +519,13 @@ not user accounts, and it does not rotate on its own.
 
 - **Never commit `.env`** — it's in `.gitignore`
 - **Keep `~/.hermes/.env` private** — it contains your OpenRouter API key and Discord bot token
-- The Flask server binds to `0.0.0.0:5000` — restrict it with a firewall if not behind a tunnel:
-  ```bash
-  ufw allow from 127.0.0.1 to any port 5000
-  ```
+- The hub binds to `127.0.0.1:5000` only: the tunnel reaches it locally, nothing else can
+- The hub runs as the unprivileged `hermes-hub` user, with a read-only view of the system
+  and no access to `/root` (see the hardening block in `deploy/hermes-hub.service`)
+- Access logging is off, because the one-time `?k=<token>` login would otherwise be
+  written to the journal in clear
 - The Hermes Agent API (port 8642) is local-only by default — do not expose it publicly
-- ngrok free tier URLs are public — anyone with the URL can use the voice interface; add authentication if needed
+- The ngrok URL is public: the token gate above is what stands between it and the agent
 
 ---
 
