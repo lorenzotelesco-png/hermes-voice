@@ -288,10 +288,11 @@ Prese il 2026-09-25:
 - **WeChat**: da includere, con una strada da trovare che non rischi l'account.
 - **Frontend**: riscritto con Vite + Preact nella fase 0.
 
+- **Mirroring su Discord** delle sessioni vocali: tolto con la fase 1, come da
+  piano. Le trascrizioni ora sono nell'app.
+
 Ancora aperte:
 
-- **Togliere il mirroring su Discord** delle sessioni vocali. *Raccomandato: sì,
-  nella fase 1.* Fino ad allora resta attivo com'era.
 - **Come integrare Beeper**, vedi fase 4.
 
 ## 10. Fase 0: completata il 2026-09-25
@@ -346,12 +347,52 @@ Pulizie rimaste, nessuna bloccante:
   funziona da Git Bash; l'OpenSSH di Windows rifiuta il file per un permesso rimasto a
   un utente Windows sconosciuto.
 
+## 11. Fase 1: completata il 2026-09-25
+
+Voce e testo sono la stessa conversazione, su una sessione di Hermes:
+
+- **Endpoint misurato prima di migrare**: prima frase mediana 2.15 s sulle sessioni
+  contro 2.18 s su chat completions, in misura alternata sul VPS. Quindi anche la
+  voce è passata alle sessioni.
+- **Criteri verificati** (sul VPS, copia di prova del branch accanto alla
+  produzione):
+  - latenza: prima frase mediana 1.51 s contro 1.53 s del percorso della fase 0,
+    11 turni vocali alternati;
+  - memoria: al 22° turno Hermes cita testualmente la prima frase della
+    conversazione, che la finestra di 8 messaggi della fase 0 aveva perso;
+  - approvazione: `echo $((12*3))` chiede conferma, approvato dal foglio sul
+    telefono, risposta in pochi secondi invece dei 62 s della fase 0;
+  - continuità voce/testo: stessa sessione, turni vocali con frasi e prompt
+    vocale, turni scritti con Markdown.
+- **I turni sopravvivono all'app che esce dallo schermo.** L'Hub legge lo stream
+  di Hermes per conto suo e il telefono lo segue: staccato a metà risposta e
+  ripreso 4 s dopo, il turno era finito `completed` con tutte le frasi. Prima,
+  ogni disconnessione di iOS avrebbe interrotto Hermes. Anche il ricaricamento
+  della pagina a metà turno è coperto.
+- Elenco di tutte le conversazioni (app, Discord, terminale, cron) con ricerca,
+  apertura e prosecuzione; stop del turno; audit log di approvazioni e stop.
+- Risposte JSON compresse: una trascrizione da 82 KB passa a 24 KB, da 1.3 s a
+  0.86 s dal PC in Cina. Gli stream restano non compressi.
+
+Da provare sul telefono: la voce con il microfono vero (qui è stata verificata la
+parte server, frasi comprese, non l'audio dell'iPhone).
+
+Da sapere:
+
+- "Approva anche quelli simili" vale fino alla fine di quella risposta, non per
+  tutta la conversazione: su questo endpoint Hermes lega le approvazioni al turno.
+  "Sempre" non è mai proposto.
+- Se nessuno risponde, Hermes nega da solo il comando dopo `approvals.timeout`
+  (60 s).
+- Le sessioni di prova dei benchmark sono nella cronologia di Hermes insieme
+  alle altre (vedi le pulizie al punto 10).
+
 ## Riepilogo
 
 | Fase | Cosa ottieni | Stima |
 |---|---|---|
 | 0 | Backend solido, scheletro della nuova UI, Hermes aggiornato — **fatta** | 1 g |
-| 1 | Chat voce + testo con trascrizioni, sessioni di tutti i canali, approvazioni | 4-6 gg |
+| 1 | Chat voce + testo con trascrizioni, sessioni di tutti i canali, approvazioni — **fatta** | 1 g |
 | 2 | Stato del server, log, cron, costi, notifiche push | 3-4 gg |
 | 3 | Vault Obsidian e file dal telefono | 3-4 gg |
 | 4 | Chat da Beeper (WhatsApp, Instagram, ...), poi WeChat | da stimare |

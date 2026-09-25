@@ -368,14 +368,20 @@ export class ChatStore {
     this.set({ running: false, approval: null });
   }
 
-  // Hermes names a new conversation from its first exchange, a moment after it ends.
-  private refreshTitle(id: string) {
+  // Hermes names a new conversation from its first exchange, a moment after it
+  // ends — a few seconds, longer after a long reply.
+  private refreshTitle(id: string, delays = [4000, 12000]) {
+    const [delay, ...rest] = delays;
+    if (delay === undefined) return;
     setTimeout(async () => {
+      if (this.snap.sessionId !== id || this.snap.title) return;
       try {
         const data = await api(`/api/sessions/${encodeURIComponent(id)}`);
-        if (this.snap.sessionId === id && data.session.title) this.set({ title: data.session.title });
+        if (this.snap.sessionId !== id) return;
+        if (data.session.title) this.set({ title: data.session.title });
+        else this.refreshTitle(id, rest);
       } catch { /* the title is a nicety */ }
-    }, 4000);
+    }, delay);
   }
 }
 
