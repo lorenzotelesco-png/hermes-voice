@@ -122,6 +122,7 @@ fase 5 aprirebbe tutto.
 6. **Spazio**: rimuovere Ollama (1.9 GB) e i modelli Piper duplicati. Prima va spostata
    la compressione del contesto di Hermes (`auxiliary.compression`), che punta ancora a
    Ollama anche se il servizio è spento: con le sessioni lunghe della fase 1 fallirebbe.
+   *Compressione spostata; Ollama sospeso, vedi punto 10.*
 
 **Fatto quando**: la voce funziona dallo stesso URL di sempre con prima frase entro +10%
 di oggi (misurata con "Tempi sullo schermo" in Altro); il telefono non deve rifare il
@@ -292,17 +293,36 @@ Ancora aperte:
   nella fase 1.* Fino ad allora resta attivo com'era.
 - **Come integrare Beeper**, vedi fase 4.
 
-## 10. Debiti aperti dalla fase voce
+## 10. Stato della fase 0 (2026-09-25)
 
-Da chiudere nella fase 0:
+In produzione dal branch `hub/phase-0`, stesso URL ngrok di prima:
 
-- PR e merge di `modernize/hermes-2026-09`.
-- Esito di TASK 24 (toolset `file`/`terminal` per l'API server): non ancora riportato.
-- Turni da 6 s: da misurare con `?debug=1` su una domanda che usa `web_search` e una che
-  non lo usa, e da verificare se `response_cache` falsa le misure veloci.
-- Ollama (1.9 GB) e modelli Piper duplicati (61 MB) da rimuovere.
-- TASK 13: `Credenziali e API.md` sul VPS fuori da git.
-- SSH dal PC: la chiave funziona, ma `~/.ssh/config` punta ancora al vecchio percorso.
+- Backend FastAPI in `/opt/hermes-hub` come utente `hermes-hub`, servizio
+  `hermes-hub`; il vecchio `hermes-voice` è disabilitato ma ancora installato in
+  `/root/hermes-voice` come ritorno indietro (`systemctl disable --now hermes-hub &&
+  systemctl enable --now hermes-voice`).
+- Latenza della prima frase, misura alternata sul VPS: 2.86 s con l'Hub contro 2.99 s
+  col vecchio server, cioè pari.
+- Hermes aggiornato da `3513a3b9` (v0.21.0) a `e726b798` (v0.21.5): contract check
+  verde prima e dopo. L'aggiornamento ha aggiunto il toolset `connections` al canale
+  API.
+- Compressione del contesto spostata da Ollama al modello principale.
+
+Resta aperto:
+
+- **Prova sul telefono** della voce, con "Tempi sullo schermo": è il criterio di
+  accettazione della fase. Dopo, merge di `hub/phase-0` su `master`.
+- **Ollama non rimosso**: il provider di memoria `memory_tencentdb`, installato il 23/09,
+  lo usa come modello. Quel provider è comunque rotto dal 23/09 (manca `pnpm`, si
+  riavvia di continuo). Va sistemato o sostituito prima di decidere su Ollama.
+- `/root/hermes-voice` (con i 61 MB di modelli Piper duplicati): da cancellare dopo
+  qualche giorno senza bisogno di tornare indietro.
+- Turni lenti: in una prova la prima frase è arrivata a 5.6 s, in tutte le altre tra
+  2.6 e 3.5 s. Da misurare con una domanda che usa `web_search` e una che non lo usa.
+- TASK 24 risulta applicato (`file` e `terminal` nel toolset del canale API).
+- TASK 13: `Credenziali e API.md` sul VPS fuori da git, da verificare.
+- SSH dal PC: la chiave in `Downloads\🔐 Sicurezza\private_key` funziona, ma
+  `~/.ssh/config` punta ancora al vecchio percorso.
 
 ## Riepilogo
 
