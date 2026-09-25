@@ -59,6 +59,15 @@ RESTARTABLE = _units(os.environ.get(
     "HUB_RESTARTABLE", "hermes-agent,hermes-dashboard,ngrok-tunnel,warp-svc,warp-socks-ts"))
 # Root-side helper for restarts and service journals (deploy/control/).
 CONTROL_SOCKET = os.environ.get("HUB_CONTROL_SOCKET", "/run/hermes-hub-control.sock")
+# Root-side helper for the Obsidian vault (deploy/vault/): read, search, and
+# every write as a git commit pushed to GitHub.
+VAULT_SOCKET = os.environ.get("HUB_VAULT_SOCKET", "/run/hermes-hub-vault.sock")
+# Read-only folders shown in the File tab, read through the dashboard (which
+# runs as root and sees the whole disk: these are the only ones the hub asks for).
+FILE_ROOTS = {
+    "hermes": ("Codice di Hermes", "/root/.hermes/hermes-agent"),
+    "logs": ("Log di Hermes", "/root/.hermes/logs"),
+}
 # The watcher behind the push alerts. Tests turn it off.
 MONITOR = os.environ.get("HUB_MONITOR", "1") != "0"
 

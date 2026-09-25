@@ -30,6 +30,17 @@ actually broke or would break silently:
 - `test_push.py` — Web Push encryption identical to RFC 8291's example, what a
   browser decrypts, VAPID signature and claims, endpoints limited to real push
   services, subscriptions a push service reports gone removed.
+- `test_vault_helper.py` — the vault helper against three real git repos
+  standing in for GitHub, the server and the PC: a save reaches the PC's pull;
+  edits to different lines merge; the same line comes back as a conflict with
+  nothing written; GitHub moving under an unpushed commit leaves both versions;
+  offline saves go out on the next sync; quick notes land under "Note libere";
+  uploads never overwrite; paths out of the vault, hidden or through a symlink
+  refused; accent-blind search.
+- `test_files.py` — the File tab's routes: the helper's refusals keep their
+  status (409 with the PC's version), images served with their type, uploads
+  over 15 MB stopped in the hub, every write audited; Hermes' folders only under
+  their roots, strange paths stopped before the dashboard.
 - `test_shell.py` — serving the built app: `index.html` never cached, hashed
   assets cached for good, app routes fall back to `index.html`, nothing outside
   `web/dist` reachable.

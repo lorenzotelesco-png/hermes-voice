@@ -4,7 +4,8 @@
 
 Phase 1: one conversation for voice and text on Hermes' own sessions, every
 channel's transcripts, and approvals answered from the phone. Phase 2: the
-server — services, resources, logs, cron, restarts, and push alerts.
+server — services, resources, logs, cron, restarts, and push alerts. Phase 3:
+the Obsidian vault and Hermes' folders (files.py).
 """
 import asyncio
 import base64
@@ -18,7 +19,7 @@ from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
-from . import audit, config, control, hermes, monitor, push, runs, security, system, transcript
+from . import audit, config, control, files, hermes, monitor, push, runs, security, system, transcript
 from .speech import sse
 
 
@@ -530,6 +531,9 @@ async def push_unsubscribe(request: Request):
 async def push_test():
     sent = await push.send_all("Notifiche attive", "Da qui arriveranno gli avvisi del server.", tag="test")
     return {"sent": sent}
+
+
+app.include_router(files.router)
 
 
 @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])

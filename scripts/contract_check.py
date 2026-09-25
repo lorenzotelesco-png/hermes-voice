@@ -38,7 +38,7 @@ API_BASE = os.environ.get("HERMES_API_URL", "http://127.0.0.1:8642").split("/v1/
 API_KEY = os.environ.get("HERMES_API_KEY", "")
 DASH = os.environ.get("HERMES_DASHBOARD_URL", "http://127.0.0.1:9119")
 DASH_TOKEN = os.environ.get("HERMES_DASHBOARD_TOKEN", "")
-VAULT = os.environ.get("HUB_VAULT_PATH", "/root/obsidian-vault")
+HERMES_CODE = "/root/.hermes/hermes-agent"
 
 # (service, path, fields that must exist — dotted, "[]" for "is a list", phase that needs it)
 CHECKS = [
@@ -55,7 +55,9 @@ CHECKS = [
     ("dash", "/api/logs?file=agent&lines=1", ["lines"], 2),
     ("dash", "/api/analytics/usage?days=1", ["daily", "by_model"], 2),
     ("dash", "/api/cron/jobs", ["[]"], 2),
-    ("dash", f"/api/fs/list?path={VAULT}", ["entries"], 3),
+    # The File tab's read-only folders; the vault itself goes through the hub's own helper.
+    ("dash", f"/api/fs/list?path={HERMES_CODE}", ["entries"], 3),
+    ("dash", f"/api/fs/read-text?path={HERMES_CODE}/README.md", ["path", "text", "binary", "truncated"], 3),
 ]
 
 

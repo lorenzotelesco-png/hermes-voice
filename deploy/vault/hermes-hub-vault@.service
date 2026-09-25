@@ -1,0 +1,23 @@
+[Unit]
+Description=Hermes Hub vault request
+CollectMode=inactive-or-failed
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/libexec/hermes-hub-vault
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+SyslogIdentifier=hermes-hub-vault
+# Root, because the vault and the GitHub credentials in its .git/config are
+# root's. The vault is the only place it can write; the network is for GitHub.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/root/obsidian-vault
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RuntimeMaxSec=150
