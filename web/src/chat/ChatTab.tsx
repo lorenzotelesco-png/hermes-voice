@@ -3,7 +3,7 @@ import { chat, type ChatSnap, type Item } from './store';
 import { voice } from '../voice/engine';
 import { renderMarkdown } from './markdown';
 import { sourceLabel, toolLabel } from './labels';
-import { MicIcon, VoiceDock } from './VoiceDock';
+import { MicIcon, WaveIcon } from './VoiceStage';
 
 function Markdown({ text }: { text: string }) {
   const html = useMemo(() => renderMarkdown(text), [text]);
@@ -73,9 +73,6 @@ function Composer({ running }: { running: boolean }) {
 
   return (
     <form class="composer" onSubmit={e => { e.preventDefault(); send(); }}>
-      <button type="button" class="round mic" title="Parla" onClick={() => voice.start()}>
-        <MicIcon />
-      </button>
       <textarea ref={ref} rows={1} value={text} placeholder="Scrivi a Hermes"
                 onInput={e => setText((e.target as HTMLTextAreaElement).value)}
                 onKeyDown={e => {
@@ -86,32 +83,36 @@ function Composer({ running }: { running: boolean }) {
                     send();
                   }
                 }} />
+      {/* One button, as in ChatGPT: voice mode while the field is empty,
+          send once there is text, stop while Hermes is answering. */}
       {running
         ? <button type="button" class="round stop" title="Ferma" onClick={() => chat.stop()}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
           </button>
-        : <button type="submit" class="round send" title="Invia" disabled={!text.trim()}>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
-          </button>}
+        : text.trim()
+          ? <button type="submit" class="round send" title="Invia">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+            </button>
+          : <button type="button" class="round voice-btn" title="Parla con Hermes" onClick={() => voice.start()}>
+              <WaveIcon />
+            </button>}
     </form>
   );
 }
 
 export function ChatTab() {
   const [snap, setSnap] = useState<ChatSnap>(chat.snapshot);
-  const [voiceOn, setVoiceOn] = useState(voice.active);
   const scroller = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
 
   useEffect(() => chat.subscribe(setSnap), []);
-  useEffect(() => voice.subscribe(s => setVoiceOn(s.state !== 'off')), []);
 
   // Follow the conversation while the reader is at the bottom; leave them
   // alone once they scroll up to read something older.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
-  }, [snap.items, snap.running, voiceOn]);
+  }, [snap.items, snap.running]);
 
   const onScroll = () => {
     const el = scroller.current!;
@@ -145,7 +146,7 @@ export function ChatTab() {
           <div class="empty">
             <h1>HERMES</h1>
             <span class="rule" />
-            <p>scrivi o tocca il microfono</p>
+            <p>scrivi, o tocca il tasto voce</p>
           </div>
         )}
         {snap.loading && !snap.items.length && <div class="loading">carico la conversazione…</div>}
@@ -153,7 +154,7 @@ export function ChatTab() {
         {waiting && <div class="typing" aria-label="Hermes sta scrivendo"><i /><i /><i /></div>}
       </div>
 
-      {voiceOn ? <VoiceDock /> : <Composer running={snap.running} />}
+      <Composer running={snap.running} />
     </section>
   );
 }

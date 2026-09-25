@@ -56,6 +56,11 @@ const MIN_UTTERANCE_MS = qs('minms', 500);
 const BARGE_IN_MULT = 4.0;
 const BARGE_IN_GRACE_MS = 500;
 
+// Four bands across the voice range, one per blob on screen, low to high.
+// Speech moves between them syllable by syllable, which is what makes the
+// animation follow the words instead of just their loudness.
+const BANDS: [number, number][] = [[90, 300], [300, 900], [900, 2200], [2200, 6000]];
+
 interface SttDirect {
   mode: string; wire: string; provider: string; model: string;
   base_url: string; api_key: string; language?: string;
@@ -83,7 +88,11 @@ export class VoiceEngine {
   private listeners = new Set<Listener>();
 
   private audioCtx: AudioContext | null = null;
-  private analyser: AnalyserNode | null = null;
+  private analyser: AnalyserNode | null = null;       // the mic
+  private outAnalyser: AnalyserNode | null = null;    // Hermes' voice, on its way to the speaker
+  private freq: Uint8Array<ArrayBuffer> | null = null;
+  private micFloor = [0, 0, 0, 0];                    // the room's own noise, per band
+  private calibBands: number[][] = [];
   private stream: MediaStream | null = null;
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
@@ -160,6 +169,14 @@ export class VoiceEngine {
     this.analyser.fftSize = 1024;
     this.analyser.smoothingTimeConstant = 0.5;
     this.audioCtx.createMediaStreamSource(this.stream).connect(this.analyser);
+    // Everything Hermes says passes through here on its way out, so the
+    // animation can move with the actual sound of the reply.
+    this.outAnalyser = this.audioCtx.createAnalyser();
+    this.outAnalyser.fftSize = 1024;
+    this.outAnalyser.smoothingTimeConstant = 0.55;
+    this.outAnalyser.minDecibels = -85;
+    this.outAnalyser.maxDecibels = -20;
+    this.outAnalyser.connect(this.audioCtx.destination);
 
     // Fire and forget: if it is slow or fails we simply use the relay.
     fetch('/api/voice-config')
@@ -178,6 +195,7 @@ export class VoiceEngine {
 
     this.calibrating = true;
     this.calibSamples = [];
+    this.calibBands = [];
     this.set({ muted: false, debug: '' });
     this.setState('calibrating', 'calibrazione...');
 
@@ -186,6 +204,10 @@ export class VoiceEngine {
       if (!this.active) return;
       const s = this.calibSamples;
       this.noiseFloor = Math.max(3, s.length ? s.reduce((a, b) => a + b, 0) / s.length : 5);
+      // A little above the room's average, so its hum reads as stillness.
+      const n = this.calibBands.length || 1;
+      this.micFloor = this.micFloor.map((_, b) =>
+        Math.min(0.9, 1.15 * this.calibBands.reduce((a, x) => a + x[b], 0) / n + 0.03));
       this.calibrating = false;
       this.setState('listening', 'in ascolto');
       this.monitorLoop();
@@ -200,6 +222,8 @@ export class VoiceEngine {
     if (this.recorder && this.recorder.state !== 'inactive') this.recorder.stop();
     this.stream?.getTracks().forEach(t => t.stop());
     this.audioCtx?.close();
+    this.analyser = null;
+    this.outAnalyser = null;
     if (this.currentAudio) { try { this.currentAudio.stop(); } catch { /* already ended */ } }
     this.currentAudio = null;
     this.isSpeaking = false;
@@ -244,9 +268,44 @@ export class VoiceEngine {
     return Math.sqrt(sum / d.length) * 100;
   }
 
+  private readBands(an: AnalyserNode, out: number[]) {
+    const n = an.frequencyBinCount;
+    if (!this.freq || this.freq.length !== n) this.freq = new Uint8Array(n);
+    an.getByteFrequencyData(this.freq);
+    const hz = an.context.sampleRate / an.fftSize;
+    BANDS.forEach(([lo, hi], b) => {
+      const i0 = Math.max(1, Math.floor(lo / hz));
+      const i1 = Math.min(n - 1, Math.ceil(hi / hz));
+      let sum = 0;
+      for (let i = i0; i <= i1; i++) sum += this.freq![i];
+      out[b] = sum / ((i1 - i0 + 1) * 255);
+    });
+    return out;
+  }
+
+  /**
+   * How much each voice band is sounding right now, 0..1, low to high: the
+   * mic while listening (less the room's noise), Hermes' voice while it
+   * speaks, and nothing at all while it thinks.
+   */
+  levels(out: number[]) {
+    const state = this.snap.state;
+    if (state === 'speaking' && this.outAnalyser) return this.readBands(this.outAnalyser, out);
+    if (state === 'listening' && this.analyser && !this.snap.muted) {
+      this.readBands(this.analyser, out);
+      for (let b = 0; b < out.length; b++) {
+        out[b] = Math.max(0, (out[b] - this.micFloor[b]) / (1 - this.micFloor[b]));
+      }
+      return out;
+    }
+    out.fill(0);
+    return out;
+  }
+
   private monitorCalib() {
     if (!this.calibrating || !this.active) return;
     this.calibSamples.push(this.getRMS());
+    this.calibBands.push(this.readBands(this.analyser!, [0, 0, 0, 0]));
     setTimeout(() => this.monitorCalib(), 80);
   }
 
@@ -395,7 +454,7 @@ export class VoiceEngine {
     return new Promise<void>(res => {
       const src = this.audioCtx!.createBufferSource();
       src.buffer = decoded;
-      src.connect(this.audioCtx!.destination);
+      src.connect(this.outAnalyser || this.audioCtx!.destination);
       this.currentAudio = src;
       this.playbackStartedAt = performance.now();
       src.onended = () => {
