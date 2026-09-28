@@ -68,6 +68,10 @@ FILE_ROOTS = {
     "hermes": ("Codice di Hermes", "/root/.hermes/hermes-agent"),
     "logs": ("Log di Hermes", "/root/.hermes/logs"),
 }
+# OpenCode's server (the Code tab): loopback only, basic auth. The password is
+# OPENCODE_SERVER_PASSWORD from /root/.config/opencode/server.env.
+OPENCODE_URL = os.environ.get("HUB_OPENCODE_URL", "http://127.0.0.1:4096").rstrip("/")
+OPENCODE_PASSWORD = os.environ.get("HUB_OPENCODE_PASSWORD", "")
 # The watcher behind the push alerts. Tests turn it off.
 MONITOR = os.environ.get("HUB_MONITOR", "1") != "0"
 

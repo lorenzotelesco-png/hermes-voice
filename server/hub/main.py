@@ -19,7 +19,8 @@ from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
-from . import assistant, audit, config, control, files, hermes, monitor, push, runs, security, system, transcript
+from . import (assistant, audit, config, control, files, hermes, monitor, opencode, passkey, push, runs,
+               security, system, transcript)
 from .speech import VOICE_SYSTEM_PROMPT, sse
 
 
@@ -50,6 +51,13 @@ def error(message, status):
 @app.exception_handler(hermes.HermesError)
 async def hermes_error(request: Request, exc: hermes.HermesError):
     print(f"[HERMES ERROR] {request.method} {request.url.path}: {exc}")
+    return error(str(exc), exc.status)
+
+
+@app.exception_handler(opencode.OpenCodeError)
+async def opencode_error(request: Request, exc: opencode.OpenCodeError):
+    if exc.status >= 500:
+        print(f"[OPENCODE ERROR] {request.method} {request.url.path}: {exc}")
     return error(str(exc), exc.status)
 
 
@@ -526,6 +534,9 @@ async def push_test():
 
 app.include_router(files.router)
 app.include_router(assistant.router)
+app.include_router(passkey.router)
+app.include_router(opencode.router)
+app.include_router(opencode.ws_router)
 
 
 @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])

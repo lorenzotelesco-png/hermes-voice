@@ -13,6 +13,7 @@ whole diagnosis: fix the adapter in server/hub/hermes.py, or roll back.
 
 Stdlib only, so it runs with the system python3 whatever state the venvs are in.
 """
+import base64
 import json
 import os
 import sys
@@ -39,6 +40,8 @@ API_KEY = os.environ.get("HERMES_API_KEY", "")
 DASH = os.environ.get("HERMES_DASHBOARD_URL", "http://127.0.0.1:9119")
 DASH_TOKEN = os.environ.get("HERMES_DASHBOARD_TOKEN", "")
 HERMES_CODE = "/root/.hermes/hermes-agent"
+OPENCODE = os.environ.get("HUB_OPENCODE_URL", "http://127.0.0.1:4096")
+OPENCODE_PASSWORD = os.environ.get("HUB_OPENCODE_PASSWORD", "")
 
 # (service, path, fields that must exist — dotted, "[]" for "is a list", phase that needs it)
 CHECKS = [
@@ -58,6 +61,12 @@ CHECKS = [
     # The File tab's read-only folders; the vault itself goes through the hub's own helper.
     ("dash", f"/api/fs/list?path={HERMES_CODE}", ["entries"], 3),
     ("dash", f"/api/fs/read-text?path={HERMES_CODE}/README.md", ["path", "text", "binary", "truncated"], 3),
+    # The Code tab: OpenCode's server (opencode serve, loopback, password).
+    ("oc", "/experimental/session?roots=true&limit=1", ["[]"], "C"),
+    ("oc", "/project", ["[]"], "C"),
+    ("oc", "/pty", ["[]"], "C"),
+    ("oc", "/session/status", [], "C"),
+    ("oc", "/permission", ["[]"], "C"),
 ]
 
 
@@ -84,8 +93,9 @@ def has(value, dotted):
 
 def main():
     headers = {"api": {"Authorization": f"Bearer {API_KEY}"},
-               "dash": {"X-Hermes-Session-Token": DASH_TOKEN}}
-    base = {"api": API_BASE, "dash": DASH}
+               "dash": {"X-Hermes-Session-Token": DASH_TOKEN},
+               "oc": {"Authorization": "Basic " + base64.b64encode(f"opencode:{OPENCODE_PASSWORD}".encode()).decode()}}
+    base = {"api": API_BASE, "dash": DASH, "oc": OPENCODE}
     failed = 0
     for service, path, fields, phase in CHECKS:
         status, raw = get(base[service] + path, headers[service])

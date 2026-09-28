@@ -46,6 +46,13 @@ actually broke or would break silently:
   the same session for 10 minutes; goodbyes that never reach Hermes; an
   approval or a long task ending the call with a sentence and a notification
   that opens the app on it; a rate limit; revocation.
+- `test_code.py` — the Code tab with a software passkey signing like an
+  iPhone: locked until Face ID; wrong origin, no user verification, altered
+  signature, unknown key, another site and replayed challenges refused; a
+  second passkey only after an unlock; OpenCode's sessions, transcript,
+  prompt, stop and permissions (never "always"), events limited to one
+  session, terminals and the WebSocket relay, which refuses no login, no
+  unlock and other sites.
 - `test_shell.py` — serving the built app: `index.html` never cached, hashed
   assets cached for good, app routes fall back to `index.html`, nothing outside
   `web/dist` reachable.

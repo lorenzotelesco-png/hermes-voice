@@ -483,6 +483,50 @@ Non fatto, di proposito: cancellare e rinominare dal telefono (si fa su
 Obsidian; cancellare vorrebbe una conferma in più e rinominare dovrebbe
 aggiornare i collegamenti come fa Obsidian).
 
+## 14. Hey Hermes, terminale e OpenCode: in produzione il 2026-09-28
+
+Richiesti dopo la fase 3, prima della 4.
+
+**Incidente trovato e chiuso.** Il server OpenCode (`opencode serve`, root,
+servizio utente di root `opencode-server`) ascoltava su 0.0.0.0:4096 senza
+password, e dal 25/09 12:48 il plugin `opencode-mobile` lo esponeva su internet
+con un tunnel Cloudflare: chiunque avesse l'indirizzo poteva eseguire comandi
+come root e leggere la configurazione con la chiave OpenRouter. Nessuna
+sessione estranea nel database (le ultime, 12:48-12:54 del 25/09, sono la prova
+di chi l'ha configurato), ma una lettura della configurazione non lascia
+traccia. Chiuso il 28/09 su richiesta dell'utente: servizio fermato, plugin tolto
+(`config.json` con backup), OpenCode riacceso solo su 127.0.0.1 con password
+(`/root/.config/opencode/server.env`, 0600). Da decidere dall'utente: ruotare la
+chiave OpenRouter.
+
+**Hey Hermes.** Nessuna app iPhone può ascoltare una parola d'attivazione; il
+"Hey Jarvis" che circola è una funzione di iOS 18 (Accessibilità › Abbreviazioni
+vocali) che lancia un'azione su una frase scelta, anche a telefono bloccato. Il
+repo open source equivalente esiste solo per Android
+(`Bwarhness/jarvis-assistant`, proprio per Hermes). Qui: una Scorciatoia
+(detta → chiede all'Hub → pronuncia) con una chiave sua, creata in Altro,
+mostrata una volta, valida solo per `/api/assistant/ask`. Stessa sessione per 10
+minuti, "grazie" chiude, approvazioni e lavori oltre 40 s finiscono in una
+notifica che apre l'app sul turno. Verificato da fuori via ngrok: 2,3 s a
+domanda, il seguito ricorda la domanda prima, la chiave non apre altro,
+revocata non entra.
+
+**Tab Codice.** Dietro Face ID (passkey WebAuthn, sblocco di 30 minuti): i
+terminali di OpenCode (shell o OpenCode interattivo, restano vivi quando l'app
+va in background e rimostrano la cronologia al ritorno) e le sessioni OpenCode
+come chat, con strumenti, permessi e stop. Niente terzo aiutante root: l'Hub
+parla con il server OpenCode, che gira già come root. Provato con l'Hub in
+locale collegato all'OpenCode vero via tunnel SSH: terminale, tasti speciali,
+ripresa, OpenCode interattivo, una sessione con un comando bash eseguito e la
+risposta in streaming; sessione e terminali di prova poi cancellati. Face ID
+coperto dai test (una passkey software che firma come un iPhone), da provare
+sul telefono.
+
+Scoperte strada facendo: i PTY di OpenCode aggiungono un'opzione di login al
+comando, che `opencode` rifiuta (quindi parte da `bash -lc`); dentro i suoi
+terminali OpenCode esporta la propria password nell'ambiente, cosa accettabile
+perché lì si è già root.
+
 ## Riepilogo
 
 | Fase | Cosa ottieni | Stima |
@@ -491,5 +535,6 @@ aggiornare i collegamenti come fa Obsidian).
 | 1 | Chat voce + testo con trascrizioni, sessioni di tutti i canali, approvazioni — **fatta** | 1 g |
 | 2 | Stato del server, log, cron, costi, notifiche push — **fatta** | 1 g |
 | 3 | Vault Obsidian e file dal telefono — **fatta** | 1 g |
+| + | Hey Hermes, terminale e OpenCode dall'app, dietro Face ID — **fatta** | 1 g |
 | 4 | Chat da Beeper (WhatsApp, Instagram, ...), poi WeChat | da stimare |
 | 5 | Hermes che legge, riassume e risponde ai messaggi, con la tua conferma | 5-7 gg |
