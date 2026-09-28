@@ -111,8 +111,9 @@ export class ChatStore {
       if (document.visibilityState === 'visible') this.resume();
     });
     addEventListener('online', () => this.resume());
+    // A notification link may have opened a conversation already.
     const id = load(SESSION_KEY);
-    if (id) this.open(id);
+    if (id && id !== this.snap.sessionId) this.open(id);
   }
 
   async open(id: string) {
@@ -147,6 +148,13 @@ export class ChatStore {
       if (sessionId === id) this.watch(runId);
       else store(RUN_KEY, null);
     }
+  }
+
+  /** Open a conversation on a turn started elsewhere (Hey Hermes), to follow it
+   *  and answer its approvals: the same path as a turn left running on reload. */
+  followRun(runId: string, sessionId: string) {
+    store(RUN_KEY, `${runId} ${sessionId}`);
+    this.open(sessionId);
   }
 
   newChat() {

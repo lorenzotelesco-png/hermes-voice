@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { DEBUG, DEBUG_KEY } from '../voice/engine';
+import { HeyHermes } from './HeyHermes';
 
 declare const __BUILD__: { sha: string; time: string };
 
@@ -38,6 +39,8 @@ export function MoreTab() {
         <input type="checkbox" checked={DEBUG}
                onChange={e => { setFlag(DEBUG_KEY, (e.target as HTMLInputElement).checked); location.reload(); }} />
       </label>
+      <h3>Hey Hermes</h3>
+      <HeyHermes />
     </section>
   );
 }

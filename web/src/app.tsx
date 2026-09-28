@@ -43,7 +43,19 @@ export function App() {
   const [voiceOn, setVoiceOn] = useState(voice.active);
 
   useEffect(() => {
-    const onHash = () => setRoute(currentRoute());
+    const onHash = () => {
+      // Links from notifications: #/chat/apri/<session> opens a conversation,
+      // #/chat/turno/<run>/<session> a turn waiting for an approval.
+      const [, sub, a, b] = location.hash.replace(/^#\/?/, '').split('/');
+      if (location.hash.startsWith('#/chat/') && (sub === 'apri' || sub === 'turno') && a) {
+        if (sub === 'apri') chat.open(decodeURIComponent(a));
+        else if (b) chat.followRun(decodeURIComponent(a), decodeURIComponent(b));
+        location.replace('#/chat');
+        return;
+      }
+      setRoute(currentRoute());
+    };
+    onHash();
     addEventListener('hashchange', onHash);
     return () => removeEventListener('hashchange', onHash);
   }, []);

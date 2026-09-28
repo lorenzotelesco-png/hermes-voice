@@ -30,6 +30,9 @@ PUBLIC_PATHS = {"/health", "/api/health",
                 "/favicon.ico", "/manifest.json", "/sw.js",
                 "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png"}
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+# Reachable with a bearer key instead of the cookie: the "Hey Hermes"
+# Shortcut's own key, which opens this path and no other (assistant.py).
+BEARER_PATHS = {"/api/assistant/ask"}
 
 
 def _sign(raw):
@@ -74,6 +77,10 @@ def check(request):
         return 503, "VOICE_AUTH_TOKEN is not set on the server"
     if request.url.path in PUBLIC_PATHS:
         return None
+    auth = request.headers.get("authorization", "")
+    if request.url.path in BEARER_PATHS and auth[:7].lower() == "bearer ":
+        from . import assistant
+        return None if assistant.key_ok(auth[7:].strip()) else (401, "unauthorized")
     key = request.query_params.get("k", "")
     if key and hmac.compare_digest(key.encode(), config.VOICE_AUTH_TOKEN.encode()):
         request.state.grant_cookie = True

@@ -19,8 +19,8 @@ from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
-from . import audit, config, control, files, hermes, monitor, push, runs, security, system, transcript
-from .speech import sse
+from . import assistant, audit, config, control, files, hermes, monitor, push, runs, security, system, transcript
+from .speech import VOICE_SYSTEM_PROMPT, sse
 
 
 
@@ -166,15 +166,6 @@ async def tts(request: Request):
         return error("dashboard returned no audio", 502)
     return {"audio": data_url.split(",", 1)[1], "mime": result.get("mime_type")}
 
-
-VOICE_SYSTEM_PROMPT = (
-    "Sei Hermes, un assistente vocale personale. "
-    "Rispondi SEMPRE e SOLO in italiano, qualunque cosa scriva l'utente. "
-    "Le tue risposte vengono lette ad alta voce da un sintetizzatore vocale: "
-    "usa frasi brevi e naturali, come in una conversazione parlata. "
-    "Non usare mai markdown, asterischi, elenchi puntati, simboli speciali o codice. "
-    "Sii conciso: massimo 2-3 frasi per risposta, salvo quando l'utente chiede esplicitamente dettagli."
-)
 
 # Hermes session ids seen so far: uuids, api_<ts>_<hex>, dated gateway ids.
 # Anything else is refused before it can reach a URL.
@@ -534,6 +525,7 @@ async def push_test():
 
 
 app.include_router(files.router)
+app.include_router(assistant.router)
 
 
 @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
