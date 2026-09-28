@@ -46,6 +46,10 @@ Works as a PWA from iPhone Safari over HTTPS.
 - **Push alerts** — a service down for 2 minutes, restarts by systemd (OOM
   named), disk over 85%, RAM under 300 MB, failed cron runs. They go through
   Apple's push service, so an alert that the tunnel is down still arrives.
+- **Hey Hermes** — Hermes without opening the app, phone locked too: iOS's
+  Vocal Shortcuts run a Shortcut on a phrase of your choice, which dictates,
+  asks Hermes through the hub with its own key (good for that and nothing
+  else) and speaks the answer. Set up from Altro › Hey Hermes.
 - **File tab** — the Obsidian vault on the phone: notes rendered with working
   `[[links]]` and embedded images, edited and saved, searched (accents and case
   ignored), photos and PDFs uploaded into `Allegati`, and a quick line into

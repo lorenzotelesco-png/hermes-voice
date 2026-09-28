@@ -912,3 +912,22 @@ body::after {
   color: rgba(255, 255, 255, .78);
   white-space: pre; tab-size: 4;
 }
+
+/* ── Hey Hermes ── */
+.hey .job-actions .pill { margin-top: 12px; }
+.copy-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; min-width: 0; }
+.copy-label { flex: none; font-size: .72rem; color: var(--fg-3); width: 62px; }
+.copy-row code {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: .72rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg-2);
+}
+.copy-row .pill { margin: 0; flex: none; }
+.warn-text { color: #ffd27a; }
+.howto { margin-top: 14px; font-size: .8rem; line-height: 1.5; color: var(--fg-2); }
+.howto summary { cursor: pointer; color: var(--fg); font-size: .84rem; }
+.howto p, .howto ol { margin-top: 10px; }
+.howto ol { padding-left: 1.2em; }
+.howto li + li { margin-top: 6px; }
+.howto code { font: .74rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--speak); overflow-wrap: anywhere; }
+.howto b { font-weight: 500; color: var(--fg); }

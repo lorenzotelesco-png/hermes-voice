@@ -41,6 +41,11 @@ actually broke or would break silently:
   status (409 with the PC's version), images served with their type, uploads
   over 15 MB stopped in the hub, every write audited; Hermes' folders only under
   their roots, strange paths stopped before the dashboard.
+- `test_assistant.py` — Hey Hermes: the Shortcut's key made only from the app,
+  shown once, never logged, opening that one path and no other; follow-ups in
+  the same session for 10 minutes; goodbyes that never reach Hermes; an
+  approval or a long task ending the call with a sentence and a notification
+  that opens the app on it; a rate limit; revocation.
 - `test_shell.py` — serving the built app: `index.html` never cached, hashed
   assets cached for good, app routes fall back to `index.html`, nothing outside
   `web/dist` reachable.
