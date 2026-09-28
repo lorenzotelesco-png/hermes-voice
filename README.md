@@ -50,6 +50,11 @@ Works as a PWA from iPhone Safari over HTTPS.
   Vocal Shortcuts run a Shortcut on a phrase of your choice, which dictates,
   asks Hermes through the hub with its own key (good for that and nothing
   else) and speaks the answer. Set up from Altro › Hey Hermes.
+- **Code tab** — the server's terminal and OpenCode, behind Face ID: shells
+  and OpenCode's own interface in a terminal (xterm.js, with the keys an iPhone
+  lacks) that keeps running when the app goes away and replays what was missed;
+  OpenCode's sessions in every folder as a chat, live, with its tool calls,
+  permission requests and stop.
 - **File tab** — the Obsidian vault on the phone: notes rendered with working
   `[[links]]` and embedded images, edited and saved, searched (accents and case
   ignored), photos and PDFs uploaded into `Allegati`, and a quick line into
@@ -148,6 +153,29 @@ and after `hermes update`.
 - **Alerts** are checked every 30 s by the hub itself, whether or not the app is
   open, and sent once when a problem starts and once when it ends. The first
   look after a restart of the hub only sets a baseline.
+
+### The Code tab: OpenCode and a terminal, behind Face ID
+
+- **OpenCode** runs as `opencode serve` on 127.0.0.1:4096 with a password
+  (`OPENCODE_SERVER_PASSWORD` in `/root/.config/opencode/server.env`, root's
+  user unit `opencode-server`). The hub holds it as `HUB_OPENCODE_PASSWORD`
+  and proxies OpenCode's API: sessions from `/experimental/session`, prompts
+  with `prompt_async` (the turn runs in OpenCode, not in the connection),
+  events from `/global/event` cut down to one session, permission replies
+  (once or reject; never "always"), and PTYs, whose WebSocket the hub relays.
+  Nothing of OpenCode is reachable from outside except through the hub.
+- **Face ID.** Everything under `/api/code` needs an unlock by passkey
+  (WebAuthn, verified in `passkey.py`: ES256, user verification required,
+  origin and rpId checked, one-time challenges), valid 30 minutes in its own
+  cookie limited to `/api/code`. The WebSocket, which the HTTP gate does not
+  see, checks login, unlock and Origin itself. The first passkey can be
+  enrolled with the app's login alone; any further one needs an unlock first,
+  so a stolen token cannot add a face. To start over, delete the rows of the
+  `passkeys` table in `hub.db` over SSH.
+- **Terminals** are OpenCode's PTYs: a login shell, or OpenCode's own
+  interface started from one (OpenCode adds a login flag to PTY commands,
+  which `opencode` itself rejects). They outlive the connection; reopening
+  replays the buffer from the start, reconnecting resumes from the last cursor.
 
 ### The File tab and the vault
 

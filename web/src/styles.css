@@ -729,6 +729,7 @@ body::after {
 
 /* sub-pages: log, cron */
 .sub-page { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.term-page { bottom: auto; }
 .head-btn.is-on { color: #7fdc9a; }
 
 .log-controls { flex: none; display: flex; gap: 8px; padding: 10px 12px; flex-wrap: wrap; }
@@ -931,3 +932,70 @@ body::after {
 .howto li + li { margin-top: 6px; }
 .howto code { font: .74rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--speak); overflow-wrap: anywhere; }
 .howto b { font-weight: 500; color: var(--fg); }
+
+/* ── code tab ── */
+.code { padding-bottom: 60px; }
+.code.lock { display: flex; flex-direction: column; gap: 14px; }
+.lock-btn { flex: none; width: 100%; margin-top: 10px; }
+.code .frow { align-items: center; }
+.code .frow .pill { margin: 0; flex: none; }
+.code a.frow-main { color: var(--fg); text-decoration: none; }
+.sheet .card.list { max-height: 40dvh; overflow-y: auto; }
+.sheet button.frow { width: 100%; text-align: left; }
+.custom-dir { display: flex; gap: 8px; margin-top: 12px; }
+.custom-dir input {
+  flex: 1; min-width: 0; padding: 9px 12px; border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, .12); background: rgba(0, 0, 0, .35); color: var(--fg);
+  font: 300 16px ui-monospace, SFMono-Regular, Menlo, monospace; outline: none;
+}
+.custom-dir .pill { margin: 0; }
+
+.oc-thread { display: flex; flex-direction: column; gap: 12px; padding-bottom: 16px; }
+.oc-user {
+  align-self: flex-end; max-width: 88%;
+  padding: 10px 14px; border-radius: 16px 16px 4px 16px;
+  background: rgba(198, 216, 248, .12); white-space: pre-wrap; font-size: .92rem; line-height: 1.45;
+}
+.oc-assistant { display: flex; flex-direction: column; gap: 8px; font-size: .92rem; line-height: 1.5; }
+.oc-reason { font-size: .78rem; color: var(--fg-3); }
+.oc-reason summary { cursor: pointer; }
+.oc-reason p { margin-top: 6px; white-space: pre-wrap; }
+.oc-tool { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.oc-tool.error { border-color: rgba(255, 90, 80, .35); }
+.oc-tool-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; text-align: left; }
+.oc-tool-name { flex: none; font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; color: var(--think); }
+.oc-tool-head code {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: .76rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg-2);
+}
+.oc-tool-state { flex: none; font-size: .8rem; color: var(--fg-3); }
+.oc-tool.completed .oc-tool-state { color: #7fdc9a; }
+.oc-tool.error .oc-tool-state { color: #ff9c94; }
+.oc-tool-out {
+  margin: 0; padding: 8px 10px; max-height: 40dvh; overflow: auto;
+  background: rgba(0, 0, 0, .5); border-top: 1px solid var(--line);
+  font: .72rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: rgba(255, 255, 255, .75);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.oc-patch { font-size: .76rem; color: var(--fg-3); }
+.oc-error { font-size: .8rem; color: #ff9c94; }
+.oc-busy { display: flex; align-items: center; gap: 8px; font-size: .8rem; color: var(--fg-3); }
+.oc-composer { display: flex; align-items: flex-end; gap: 8px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); }
+.oc-composer textarea { flex: 1; }
+
+.term-page { background: #000; }
+.term-host { flex: 1; min-height: 0; padding: 4px 4px 0; overflow: hidden; }
+.term-host .xterm { height: 100%; }
+.term-keys {
+  flex: none; display: flex; gap: 6px; padding: 6px 8px;
+  overflow-x: auto; scrollbar-width: none;
+  border-top: 1px solid var(--line); background: #0b0b0c;
+}
+.term-keys::-webkit-scrollbar { display: none; }
+.term-keys button {
+  flex: none; min-width: 40px; height: 34px; padding: 0 10px;
+  border-radius: 8px; border: 1px solid rgba(255, 255, 255, .12);
+  font: 400 .8rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg-2);
+}
+.term-keys button:active, .term-keys button.is-on { background: var(--listen); color: #000; }
+.head-btn.text-btn { width: auto; padding: 0 8px; font-size: .78rem; }

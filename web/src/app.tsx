@@ -11,13 +11,15 @@ import { Logs } from './server/Logs';
 import { Cron } from './server/Cron';
 import { MoreTab } from './tabs/MoreTab';
 import { FilesTab } from './files/FilesTab';
+import { CodeTab } from './code/CodeTab';
 
-type TabId = 'chat' | 'server' | 'file' | 'altro';
+type TabId = 'chat' | 'server' | 'file' | 'codice' | 'altro';
 
 const ICONS: Record<TabId, JSX.Element> = {
   chat: <path d="M4 5h16v11H9l-5 4z" />,
   server: <g><rect x="4" y="4" width="16" height="6" rx="1.5" /><rect x="4" y="14" width="16" height="6" rx="1.5" /><circle cx="8" cy="7" r=".6" /><circle cx="8" cy="17" r=".6" /></g>,
   file: <path d="M4 6.5A1.5 1.5 0 0 1 5.5 5H10l2 2h6.5A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" />,
+  codice: <g><rect x="3.5" y="5" width="17" height="14" rx="2" /><path d="M7.5 10l3 2.5-3 2.5M12.5 15.5h4" /></g>,
   altro: <g><circle cx="6" cy="12" r="1.2" /><circle cx="12" cy="12" r="1.2" /><circle cx="18" cy="12" r="1.2" /></g>,
 };
 
@@ -25,6 +27,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'chat', label: 'Chat' },
   { id: 'server', label: 'Server' },
   { id: 'file', label: 'File' },
+  { id: 'codice', label: 'Codice' },
   { id: 'altro', label: 'Altro' },
 ];
 
@@ -90,6 +93,7 @@ export function App() {
         {tab === 'chat' && (sub === 'sessioni' ? <Sessions /> : <ChatTab />)}
         {tab === 'server' && (sub === 'log' ? <Logs /> : sub === 'cron' ? <Cron /> : <ServerTab />)}
         {tab === 'file' && <FilesTab rest={rest} />}
+        {tab === 'codice' && <CodeTab rest={rest} />}
         {tab === 'altro' && <MoreTab />}
       </main>
       <nav class="tabbar">
