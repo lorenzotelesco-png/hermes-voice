@@ -187,6 +187,14 @@ def _error(message, status):
     return JSONResponse({"error": message}, status_code=status)
 
 
+@router.get(ASK_PATH)
+async def ask_opened_in_browser():
+    # The address is shown in the app to paste into the Shortcut; opened in
+    # Safari instead, say what it is for rather than "not found".
+    return _error("Questo indirizzo non si apre nel browser: lo usa la Scorciatoia, che lo chiama con POST "
+                  "e la chiave. Per provarlo c'è il pulsante «Prova» in Altro › Hey Hermes.", 405)
+
+
 @router.post(ASK_PATH)
 async def ask_route(request: Request):
     # Reached with the Shortcut's key (security.check lets only this path

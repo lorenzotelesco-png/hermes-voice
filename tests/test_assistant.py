@@ -77,6 +77,8 @@ with _setup.anon_client() as anon, _setup.signed_in_client() as app:
 
     # ── the key ────────────────────────────────────────────────────
     assert ask("ciao").status_code == 401
+    r = app.get(assistant.ASK_PATH)
+    assert r.status_code == 405 and "Scorciatoia" in r.json()["error"], r.text   # opened in Safari by mistake
     assert ask("ciao", key="inventata").status_code == 401
     assert app.get("/api/assistant/key").json()["configured"] is False
     assert app.post("/api/assistant/key", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
