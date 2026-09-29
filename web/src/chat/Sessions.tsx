@@ -108,7 +108,7 @@ export function Sessions() {
           </button>
         ))}
         {!hits && more && (
-          <button class="more" disabled={busy} onClick={() => page(rows.length)}>
+          <button class="load-more" disabled={busy} onClick={() => page(rows.length)}>
             {busy ? 'carico…' : 'Altre conversazioni'}
           </button>
         )}

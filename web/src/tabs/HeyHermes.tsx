@@ -87,23 +87,30 @@ export function HeyHermes() {
 
       <details class="howto">
         <summary>Come si prepara, una volta sola</summary>
-        <p><b>1. La Scorciatoia</b>, nell'app Comandi: nuovo comando chiamato "Hermes", con queste azioni.</p>
+        <p><b>1. La Scorciatoia</b>, nell'app Comandi: nuovo comando chiamato "Hey Hermes", con queste azioni.</p>
         <ol>
-          <li><b>Ripeti</b> 10 volte, e dentro:</li>
-          <li><b>Detta testo</b> (Dictate Text): lingua Italiano, smetti di ascoltare dopo una pausa.</li>
-          <li><b>Ottieni contenuti dell'URL</b>: l'indirizzo qui sopra; metodo POST; intestazioni
-            <code>Authorization</code> = <code>Bearer </code> seguito dalla chiave, e
-            <code>ngrok-skip-browser-warning</code> = <code>1</code>; corpo JSON con il campo
-            <code>text</code> = Testo dettato.</li>
-          <li><b>Ottieni valore dizionario</b> per la chiave <code>reply</code>, poi <b>Pronuncia testo</b> con quel valore.</li>
-          <li><b>Ottieni valore dizionario</b> per <code>end</code> dai contenuti dell'URL; <b>Se</b> è uguale a 1,
-            <b>Interrompi questo comando</b>.</li>
+          <li><b>Detta testo</b>: lingua Italiano, smetti di ascoltare dopo una pausa.</li>
+          <li><b>Ottieni contenuti di</b> (URL): l'indirizzo qui sopra; metodo POST; due intestazioni,
+            con il nome a sinistra e il valore a destra: <code>Authorization</code> = <code>Bearer </code> seguito
+            dalla chiave, e <code>ngrok-skip-browser-warning</code> = <code>1</code>; corpo JSON con un solo campo,
+            <code>text</code> = la variabile <i>Testo dettato</i> (la pillola con il microfono, non scritta a mano).</li>
+          <li><b>Ottieni valore dizionario</b> per la chiave <code>reply</code> in <i>Contenuti URL</i>.</li>
+          <li><b>Leggi ad alta voce</b> il <i>Valore dizionario</i>.</li>
         </ol>
-        <p><b>2. La frase</b>: Impostazioni › Accessibilità › Abbreviazioni vocali (Vocal Shortcuts) ›
-          aggiungi azione › scegli il comando "Hermes", scrivi "Hey Hermes" e ripetila tre volte.</p>
+        <p>Provala con ▶︎: se "La connessione è stata persa", nome e valore di un'intestazione sono invertiti;
+          se risponde "Non ho sentito niente", il campo <code>text</code> non è <i>Testo dettato</i>.</p>
+        <p><b>Per continuare a parlare</b> (facoltativo): metti le azioni dentro <b>Ripeti</b> 10 volte e aggiungi
+          in fondo <b>Ottieni valore dizionario</b> per <code>end</code> in <i>Contenuti URL</i>, poi <b>Se</b> quel
+          valore è 1 (se offre solo "ha un valore": tocca la variabile › Tipo › Numero), dentro
+          <b>Interrompi comando rapido</b>.</p>
+        <p><b>2. La frase</b>: Impostazioni › Accessibilità › Abbreviazioni vocali › aggiungi azione › Comandi
+          rapidi › "Hey Hermes", poi ripeti la frase tre volte. Riconosce la tua voce confrontandola con quelle
+          registrazioni, quindi non sempre: il Tocco posteriore (Accessibilità › Tocco) o il tasto Azione
+          avviano lo stesso comando senza sbagliare.</p>
         <p>Parli dopo il "ding" della dettatura. Per chiudere: "grazie" o "basta". Dopo 10 minuti di silenzio la
           conversazione successiva ne apre una nuova; tutte restano tra le sessioni della chat. Se Hermes chiede
-          una conferma o ci mette più di 40 secondi, te lo dice e il resto arriva come notifica.</p>
+          una conferma o ci mette più di 40 secondi, te lo dice e il resto arriva come notifica, se le hai
+          attivate in Server › Notifiche.</p>
       </details>
     </div>
   );
