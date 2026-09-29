@@ -252,6 +252,18 @@ Da includere (decisione del 2026-09-25), strada da trovare. L'adattatore iLink h
 comunque un uso concreto subito: se la VPN si blocca, Hermes resta raggiungibile da
 WeChat.
 
+**Verificato il 2026-09-29**, per la fase 4: nessuna strada legge le chat personali di
+WeChat senza rischio per l'account. Beeper non ha WeChat (né nell'app né nelle FAQ).
+Il bridge Matrix più curato (`n42blockchain/mautrix-wechat`) elenca le strade che
+esistono: GeWeChat (protocollo iPad) chiuso a maggio 2025 per azioni legali di
+WeChat; il suo successore WeChatPadPro, stesso protocollo non ufficiale, tanto che il
+bridge ha una sezione "anti-ban" con limiti giornalieri e ritardi casuali;
+WeChatFerry, iniezione di una DLL nel client Windows 3.9; WeCom, ufficiale ma solo
+per account aziendali. L'unica API ufficiale per account personali è quella dei bot
+iLink/ClawBot (marzo 2026): un bot con cui parli, non una finestra sulle tue chat.
+Quindi: WeChat resta fuori dall'Inbox; se serve, il bot iLink per parlare con Hermes
+da WeChat, come fase a parte.
+
 ## 7. Sicurezza
 
 - **Un solo ingresso pubblico**: l'URL ngrok, dietro token e cookie firmato. L'Hub ascolta
