@@ -53,6 +53,17 @@ actually broke or would break silently:
   prompt, stop and permissions (never "always"), events limited to one
   session, terminals and the WebSocket relay, which refuses no login, no
   unlock and other sites.
+- `test_inbox.py` — the Inbox against a Beeper answering like its API 5.0:
+  Beeper's state read before sign-in, after it (a 401 without a token) and
+  when it is down; connecting with PKCE, refused then approved in Beeper's
+  window, the token kept with its expiry; accounts, chat list (merged copies
+  hidden, avatars only from Beeper's folder), search and unread; a chat in
+  order with reactions on their message and hidden ones left out; sends (empty
+  and cross-site refused, replies, audited); read; media only from Beeper,
+  with Range; a revoked token asking to reconnect. The event watcher: new
+  messages to the open app, and a notification only for others' new messages,
+  once, not for history, muted chats, a chat already open, or with
+  notifications off.
 - `test_shell.py` — serving the built app: `index.html` never cached, hashed
   assets cached for good, app routes fall back to `index.html`, nothing outside
   `web/dist` reachable.

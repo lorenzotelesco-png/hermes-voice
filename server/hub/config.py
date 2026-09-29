@@ -52,11 +52,11 @@ def _units(value):
 # alert.
 MONITORED = _units(os.environ.get(
     "HUB_SERVICES",
-    "hermes-agent,hermes-dashboard,hermes-hub,ngrok-tunnel,tailscaled,warp-svc,warp-socks-ts"))
+    "hermes-agent,hermes-dashboard,hermes-hub,ngrok-tunnel,tailscaled,warp-svc,warp-socks-ts,beeper-desktop"))
 # Services the app offers to restart. The root-side helper keeps its own list
 # and has the last word: this one only decides which buttons appear.
 RESTARTABLE = _units(os.environ.get(
-    "HUB_RESTARTABLE", "hermes-agent,hermes-dashboard,ngrok-tunnel,warp-svc,warp-socks-ts"))
+    "HUB_RESTARTABLE", "hermes-agent,hermes-dashboard,ngrok-tunnel,warp-svc,warp-socks-ts,beeper-desktop"))
 # Root-side helper for restarts and service journals (deploy/control/).
 CONTROL_SOCKET = os.environ.get("HUB_CONTROL_SOCKET", "/run/hermes-hub-control.sock")
 # Root-side helper for the Obsidian vault (deploy/vault/): read, search, and
@@ -74,6 +74,15 @@ OPENCODE_URL = os.environ.get("HUB_OPENCODE_URL", "http://127.0.0.1:4096").rstri
 OPENCODE_PASSWORD = os.environ.get("HUB_OPENCODE_PASSWORD", "")
 # The watcher behind the push alerts. Tests turn it off.
 MONITOR = os.environ.get("HUB_MONITOR", "1") != "0"
+
+# ── Inbox (phase 4) ───────────────────────────────────────────────
+# Beeper Desktop's local API (deploy/beeper/): loopback only; the hub's token
+# for it is granted in Beeper's window and kept in hub.db.
+BEEPER_URL = os.environ.get("HUB_BEEPER_URL", "http://127.0.0.1:23373").rstrip("/")
+# Beeper's home: the only files (avatars, media) the hub fetches through it.
+BEEPER_FILES = os.environ.get("HUB_BEEPER_FILES", "/var/lib/beeper")
+# Beeper's live events, for the open app and new-message notifications.
+INBOX_WATCH = os.environ.get("HUB_INBOX_WATCH", "1") != "0"
 
 
 def warnings():

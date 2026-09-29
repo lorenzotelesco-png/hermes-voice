@@ -12,6 +12,7 @@ const SOURCES: { id: string; label: string }[] = [
   { id: 'unit:hermes-hub', label: 'Hub (journal)' },
   { id: 'unit:ngrok-tunnel', label: 'Tunnel ngrok (journal)' },
   { id: 'unit:warp-svc', label: 'WARP (journal)' },
+  { id: 'unit:beeper-desktop', label: 'Beeper (journal)' },
 ];
 
 const LEVELS = [['', 'tutti'], ['INFO', 'info'], ['WARNING', 'avvisi'], ['ERROR', 'errori']];

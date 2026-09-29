@@ -19,7 +19,7 @@ from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
-from . import (assistant, audit, config, control, files, hermes, monitor, opencode, passkey, push, runs,
+from . import (assistant, audit, config, control, files, hermes, inbox, monitor, opencode, passkey, push, runs,
                security, system, transcript)
 from .speech import VOICE_SYSTEM_PROMPT, sse
 
@@ -28,9 +28,13 @@ from .speech import VOICE_SYSTEM_PROMPT, sse
 @contextlib.asynccontextmanager
 async def lifespan(app):
     # The watcher runs whether or not anyone has the app open: that is the point.
-    task = asyncio.create_task(monitor.monitor.run()) if config.MONITOR else None
+    tasks = []
+    if config.MONITOR:
+        tasks.append(asyncio.create_task(monitor.monitor.run()))
+    if config.INBOX_WATCH:
+        tasks.append(asyncio.create_task(inbox.watcher.run()))
     yield
-    if task:
+    for task in tasks:
         task.cancel()
 
 
@@ -52,6 +56,13 @@ def error(message, status):
 async def hermes_error(request: Request, exc: hermes.HermesError):
     print(f"[HERMES ERROR] {request.method} {request.url.path}: {exc}")
     return error(str(exc), exc.status)
+
+
+@app.exception_handler(inbox.InboxError)
+async def inbox_error(request: Request, exc: inbox.InboxError):
+    if exc.status >= 500:
+        print(f"[INBOX ERROR] {request.method} {request.url.path}: {exc}")
+    return JSONResponse({"error": str(exc), "code": exc.code}, status_code=exc.status)
 
 
 @app.exception_handler(opencode.OpenCodeError)
@@ -537,6 +548,7 @@ app.include_router(assistant.router)
 app.include_router(passkey.router)
 app.include_router(opencode.router)
 app.include_router(opencode.ws_router)
+app.include_router(inbox.router)
 
 
 @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])

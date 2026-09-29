@@ -4,7 +4,8 @@ One phone app for [Hermes Agent](https://github.com/NousResearch/hermes-agent),
 running on your own server: talk or type in the same conversation, read the
 transcript of every channel Hermes is on, answer its approval requests, and
 watch and fix the server — with a push notification when something breaks.
-Files and an inbox of your chats come next — the plan is in
+Your Obsidian vault and your chats on every network (through Beeper) are there
+too; Hermes working on those chats comes next — the plan is in
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
 Voice is hands-free, like ChatGPT Voice Mode: speak → Whisper STT → Hermes → TTS,
@@ -61,8 +62,13 @@ Works as a PWA from iPhone Safari over HTTPS.
   today's daily note, typed or dictated. Every change is a git commit pushed to
   GitHub, so Obsidian on the PC gets it on its next pull. Hermes' code and logs
   are there too, read-only.
+- **Inbox tab** — WhatsApp, Instagram, LinkedIn and the other networks Beeper
+  connects, in one list, live: search, unread, a filter per network; a chat
+  with its photos, videos, voice notes (with Beeper's transcript), files,
+  reactions and quoted replies; reply to a message, dictate, send. New messages
+  ring the phone, once per chat, never for muted chats or the one already open.
 - **iOS Safari compatible** — AudioContext unlock, correct `audio/mp4` MIME handling
-- **App shell with tabs** — Chat, Server, File, Altro; a voice session or a
+- **App shell with tabs** — Chat, Inbox, Server, File, Codice, Altro; a voice session or a
   running turn keeps going while you look at another tab
 - **Small frontend** — Preact + TypeScript built with Vite (~36 KB gzipped JS,
   Markdown included), fonts served by the hub itself, no third-party requests
@@ -93,6 +99,8 @@ Hub — FastAPI on 127.0.0.1:5000   (thin proxy + the built app, no speech stack
   ├── GET  /api/server/*   ──► systemctl show, /proc (read without privileges),
   │                            dashboard logs / cron / usage / status
   ├── POST …/restart, GET logs of a service ──► hermes-hub-control (root helper)
+  ├── /api/inbox/*         ──► Beeper Desktop :23373 on this server (headless):
+  │                            chats, messages, media, and its live events
   └── POST /api/push/*     ──► subscriptions; alerts go out via Apple's push service
       (background)  the watcher: every 30 s, services, disk, RAM, cron → push
 ```
@@ -109,6 +117,8 @@ and after `hermes update`.
 | `server/hub/system.py`, `monitor.py` | What systemd and /proc say, and the alert rules |
 | `server/hub/control.py`, `deploy/control/` | Restarts and service journals, through the root-side helper |
 | `server/hub/push.py`, `webpush.py` | Push subscriptions, and the RFC 8291 / VAPID sender |
+| `server/hub/inbox.py`, `deploy/beeper/` | The Inbox: Beeper's API turned into what the phone draws, its events, and Beeper's install and units |
+| `web/src/inbox/` | The Inbox tab: chat list, one chat, connecting the hub |
 | `web/src/server/` | The Server tab: overview, logs, cron |
 | `web/src/chat/` | The Chat tab: `store.ts` the conversation on screen, thread, conversation list, approval sheet, voice dock |
 | `web/src/voice/engine.ts` | The voice pipeline: VAD, STT, streamed speech, barge-in |
@@ -146,7 +156,7 @@ and after `hermes update`.
   `/run/hermes-hub-control.sock` (group `hermes-hub` only) and starts
   `/usr/local/libexec/hermes-hub-control` as root per request. It checks the
   caller is the `hermes-hub` user and keeps its own allowlists (restart:
-  Hermes, dashboard, ngrok, WARP; journal: those plus the hub and
+  Hermes, dashboard, ngrok, WARP, Beeper; journal: those plus the hub and
   Tailscale). `deploy.sh` installs it from the commit fetched from GitHub, not
   from the working tree, which the hub can write. Every restart and cron action
   is in the audit log.
@@ -204,6 +214,40 @@ and after `hermes update`.
   `cryptography` (no pywebpush) and tested byte for byte against RFC 8291's
   example. The VAPID key lives in `/var/lib/hermes-hub/vapid.pem`; replacing it
   orphans every subscription.
+
+### The Inbox tab and Beeper
+
+- **Beeper Desktop runs on the server**, with no screen: `beeper-desktop.service`
+  starts it under `xvfb-run` as the `beeper` user (data in `/var/lib/beeper`).
+  With no GPU its window only appears with software GL
+  (`--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader`).
+  `deploy/beeper/install.sh [version]` installs or updates it; updates are by
+  hand, since a new Beeper can change what the hub reads. Networks are
+  connected "on this device", so the bridges run on the server and not in
+  Beeper's cloud. Its API answers on 127.0.0.1:23373 only; Remote Access stays
+  off.
+- **Logging in, once, from the PC.** `beeper-screen.service` (started by hand,
+  stops itself after 45 minutes) shows the virtual screen with x11vnc and
+  noVNC on the loopback:
+  `ssh LORE-SERVER sudo systemctl start beeper-screen`, then
+  `ssh -N -L 6080:127.0.0.1:6080 LORE-SERVER` and `http://localhost:6080/vnc.html`.
+  Sign in, save the recovery key, connect WhatsApp (QR from the phone),
+  Instagram, LinkedIn.
+- **The hub's access** is an OAuth token with PKCE: "Collega l'Hub a Beeper" in
+  the app asks, Beeper shows an approval window on that screen, and the token
+  (pick the longest expiry) stays in `hub.db`; the phone never sees it.
+  "Scollega" revokes it.
+- **One event stream.** The hub keeps one WebSocket to Beeper (`/v1/ws`) and fans
+  it out to the open app over SSE, and to push notifications: only new messages
+  from others, not older than 5 minutes (history syncing in is not news), one
+  per chat every 20 s, never for muted, low-priority or archived chats or a chat
+  open on the phone. Off switch in the tab.
+- **Media go through the hub** (`/api/inbox/asset`, with Range for audio and
+  video), which asks Beeper only for its own media (`mxc://`, `localmxc://`, or
+  files under `/var/lib/beeper`) and never any other file of the server.
+- **What reaches other people** follows a tap: a message sent (audited, with its
+  length, never its text) and the read receipt of opening a chat, as on the
+  phone.
 
 **Where things are configured** — this server decides almost nothing:
 

@@ -36,6 +36,11 @@ install_from_git "deploy/control/hermes-hub-control@.service" 644 "/etc/systemd/
 install_from_git deploy/vault/hermes-hub-vault 755 /usr/local/libexec/hermes-hub-vault
 install_from_git deploy/vault/hermes-hub-vault.socket 644 /etc/systemd/system/hermes-hub-vault.socket
 install_from_git "deploy/vault/hermes-hub-vault@.service" 644 "/etc/systemd/system/hermes-hub-vault@.service"
+# Beeper (the Inbox) is installed by deploy/beeper/install.sh. Its units are
+# refreshed here but never restarted: that would reconnect every chat network;
+# a change applies at Beeper's next restart.
+install_from_git deploy/beeper/beeper-desktop.service 644 /etc/systemd/system/beeper-desktop.service
+install_from_git deploy/beeper/beeper-screen.service 644 /etc/systemd/system/beeper-screen.service
 systemctl daemon-reload
 systemctl enable -q --now hermes-hub-control.socket hermes-hub-vault.socket
 systemctl restart hermes-hub

@@ -12,11 +12,13 @@ import { Cron } from './server/Cron';
 import { MoreTab } from './tabs/MoreTab';
 import { FilesTab } from './files/FilesTab';
 import { CodeTab } from './code/CodeTab';
+import { InboxTab } from './inbox/InboxTab';
 
-type TabId = 'chat' | 'server' | 'file' | 'codice' | 'altro';
+type TabId = 'chat' | 'inbox' | 'server' | 'file' | 'codice' | 'altro';
 
 const ICONS: Record<TabId, JSX.Element> = {
   chat: <path d="M4 5h16v11H9l-5 4z" />,
+  inbox: <g><path d="M4 13l2.2-7.1a1.5 1.5 0 0 1 1.4-1.1h8.8a1.5 1.5 0 0 1 1.4 1.1L20 13v5.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5z" /><path d="M4 13h4.5l1.5 2.5h4l1.5-2.5H20" /></g>,
   server: <g><rect x="4" y="4" width="16" height="6" rx="1.5" /><rect x="4" y="14" width="16" height="6" rx="1.5" /><circle cx="8" cy="7" r=".6" /><circle cx="8" cy="17" r=".6" /></g>,
   file: <path d="M4 6.5A1.5 1.5 0 0 1 5.5 5H10l2 2h6.5A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" />,
   codice: <g><rect x="3.5" y="5" width="17" height="14" rx="2" /><path d="M7.5 10l3 2.5-3 2.5M12.5 15.5h4" /></g>,
@@ -25,13 +27,14 @@ const ICONS: Record<TabId, JSX.Element> = {
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'chat', label: 'Chat' },
+  { id: 'inbox', label: 'Inbox' },
   { id: 'server', label: 'Server' },
   { id: 'file', label: 'File' },
   { id: 'codice', label: 'Codice' },
   { id: 'altro', label: 'Altro' },
 ];
 
-// #/chat, #/chat/sessioni, #/server, #/server/log, #/file/nota/<path> ...
+// #/chat, #/chat/sessioni, #/inbox/<chat>, #/server, #/server/log, #/file/nota/<path> ...
 function currentRoute(): { tab: TabId; sub: string; rest: string } {
   const hash = location.hash.replace(/^#\/?/, '');
   const [id, sub = ''] = hash.split('/');
@@ -92,6 +95,7 @@ export function App() {
             store, not in these components: leaving the tab ends neither. */}
         {tab === 'chat' && (sub === 'sessioni' ? <Sessions /> : <ChatTab />)}
         {tab === 'server' && (sub === 'log' ? <Logs /> : sub === 'cron' ? <Cron /> : <ServerTab />)}
+        {tab === 'inbox' && <InboxTab rest={rest} />}
         {tab === 'file' && <FilesTab rest={rest} />}
         {tab === 'codice' && <CodeTab rest={rest} />}
         {tab === 'altro' && <MoreTab />}

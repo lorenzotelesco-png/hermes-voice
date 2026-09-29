@@ -42,6 +42,8 @@ DASH_TOKEN = os.environ.get("HERMES_DASHBOARD_TOKEN", "")
 HERMES_CODE = "/root/.hermes/hermes-agent"
 OPENCODE = os.environ.get("HUB_OPENCODE_URL", "http://127.0.0.1:4096")
 OPENCODE_PASSWORD = os.environ.get("HUB_OPENCODE_PASSWORD", "")
+BEEPER = os.environ.get("HUB_BEEPER_URL", "http://127.0.0.1:23373")
+HUB_DB = os.environ.get("HUB_DB", "/var/lib/hermes-hub/hub.db")
 
 # (service, path, fields that must exist — dotted, "[]" for "is a list", phase that needs it)
 CHECKS = [
@@ -67,7 +69,25 @@ CHECKS = [
     ("oc", "/pty", ["[]"], "C"),
     ("oc", "/session/status", [], "C"),
     ("oc", "/permission", ["[]"], "C"),
+    # The Inbox: Beeper Desktop's API, with the token Beeper granted the hub.
+    ("bp", "/v1/app/setup", ["state"], 4),
+    ("bp", "/v1/accounts", ["[]"], 4),
+    ("bp", "/v1/chats?limit=1", ["items"], 4),
 ]
+
+
+def beeper_token():
+    """The hub's token for Beeper, from hub.db; None until the hub is connected."""
+    import sqlite3
+    try:
+        db = sqlite3.connect(f"file:{HUB_DB}?mode=ro", uri=True)
+        try:
+            row = db.execute("SELECT token FROM inbox WHERE id = 1").fetchone()
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return None
+    return row[0] if row else None
 
 
 def get(url, headers, body=None):
@@ -95,9 +115,14 @@ def main():
     headers = {"api": {"Authorization": f"Bearer {API_KEY}"},
                "dash": {"X-Hermes-Session-Token": DASH_TOKEN},
                "oc": {"Authorization": "Basic " + base64.b64encode(f"opencode:{OPENCODE_PASSWORD}".encode()).decode()}}
-    base = {"api": API_BASE, "dash": DASH, "oc": OPENCODE}
+    token = beeper_token()
+    headers["bp"] = {"Authorization": f"Bearer {token}"}
+    base = {"api": API_BASE, "dash": DASH, "oc": OPENCODE, "bp": BEEPER}
     failed = 0
     for service, path, fields, phase in CHECKS:
+        if service == "bp" and not token:
+            print(f"--    fase {phase}  {service:4} {path}  -> l'Hub non è ancora collegato a Beeper")
+            continue
         status, raw = get(base[service] + path, headers[service])
         problem = None
         if status != 200:

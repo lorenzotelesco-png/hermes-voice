@@ -1,0 +1,31 @@
+# Beeper Desktop on the server, with no screen: its local API
+# (127.0.0.1:23373) is the hub's inbox. Chats are connected "on device", so
+# the bridges run here and Beeper's cloud never holds the sessions.
+# Installed by deploy.sh; Beeper itself by deploy/beeper/install.sh.
+[Unit]
+Description=Beeper Desktop for Hermes Hub (headless, API on 127.0.0.1:23373)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=beeper
+Group=beeper
+WorkingDirectory=/var/lib/beeper
+Environment=HOME=/var/lib/beeper
+# A virtual screen, :99, with a cookie so only beeper (and root) can draw on
+# or read it. beeper-screen.service shows it for logins. There is no GPU:
+# unless software GL is named, the window never appears.
+ExecStart=/usr/bin/xvfb-run -n 99 -f /var/lib/beeper/.Xauthority -s "-screen 0 1280x860x24 -nolisten tcp" \
+    /opt/beeper/current/beepertexts --password-store=basic \
+    --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader
+Restart=on-failure
+RestartSec=15
+Nice=5
+MemoryHigh=1200M
+MemoryMax=1800M
+ProtectHome=yes
+ProtectSystem=full
+ReadWritePaths=/var/lib/beeper
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+# Beeper's virtual screen in a browser, only while logging in or linking a
+# chat network: VNC and noVNC on the loopback, reached through an SSH tunnel
+#   ssh -N -L 6080:127.0.0.1:6080 LORE-SERVER  →  http://localhost:6080/vnc.html
+# Started by hand, and it stops itself after 45 minutes.
+[Unit]
+Description=Beeper screen over noVNC, for logins (loopback only, on demand)
+Requires=beeper-desktop.service
+After=beeper-desktop.service
+
+[Service]
+User=beeper
+Group=beeper
+Environment=HOME=/var/lib/beeper
+ExecStart=/bin/sh -c 'x11vnc -display :99 -auth /var/lib/beeper/.Xauthority -localhost -rfbport 5999 -forever -shared -nopw -quiet & exec websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5999'
+RuntimeMaxSec=45min
+ProtectHome=yes
+ProtectSystem=full

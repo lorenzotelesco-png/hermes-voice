@@ -18,6 +18,7 @@ LABELS = {
     "tailscaled": "Tailscale",
     "warp-svc": "WARP",
     "warp-socks-ts": "Proxy WARP (Fénix)",
+    "beeper-desktop": "Beeper (Inbox)",
 }
 
 _PROPS = "Id,Description,LoadState,ActiveState,SubState,Result,NRestarts,ActiveEnterTimestampMonotonic,MemoryCurrent"

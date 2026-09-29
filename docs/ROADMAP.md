@@ -60,7 +60,7 @@ iPhone (PWA "Hub")
 Hub backend  (FastAPI, 127.0.0.1:5000, utente non-root)
    ├─► API server Hermes :8642     chat/stream, runs, approvazioni
    ├─► Dashboard Hermes  :9119     sessioni, file, stato, log, costi, cron
-   ├─► Beeper                      inbox unificata (fase 4, integrazione da progettare)
+   ├─► Beeper Desktop    :23373    inbox unificata (fase 4), sul VPS senza schermo
    ├─► STT/TTS                     client-direct come oggi
    └─► SQLite                      audit log, iscrizioni push, preferenze
 ```
@@ -187,25 +187,25 @@ telefono; latenza della prima frase entro +10%.
 **Fatto quando**: una nota modificata dal telefono compare in Obsidian sul PC dopo il
 suo pull; un conflitto simulato viene segnalato senza perdere nessuna delle due versioni.
 
-### Fase 4: inbox unificata con Beeper (da progettare)
+### Fase 4: inbox unificata con Beeper
 
 **Deciso il 2026-09-25: Beeper**, poi un modo per includere anche WeChat. Beeper
-collega già WhatsApp, Instagram, Telegram, Messenger, Signal e altri; WeChat no.
+collega già WhatsApp, Instagram, LinkedIn, Telegram, Messenger, Signal e altri;
+WeChat no.
 
-Da progettare prima di iniziare:
+Deciso il 2026-09-29:
 
-1. **Dove gira Beeper per l'Hub.** La Desktop API e il server MCP di Beeper stanno dentro
-   Beeper Desktop e rispondono solo sulla macchina dove gira. Le strade: Beeper Desktop
-   sul PC Windows (che però non è sempre acceso); Beeper Desktop sul VPS senza schermo
-   (da verificare se regge); oppure i bridge Beeper self-hosted sul VPS con `bbctl`, che
-   però passano dai server di Beeper con cifratura end-to-end da implementare nell'Hub.
-2. **Cosa mostra l'Hub**: una tab Inbox propria, oppure solo Hermes che lavora sui
-   messaggi (fase 5) mentre per leggere si usa l'app Beeper.
-3. **WeChat**: vedi il punto 6. Da cercare una strada che non metta a rischio l'account.
+1. **Beeper Desktop gira sul VPS**, senza schermo. La Desktop API e il server MCP stanno
+   dentro Beeper Desktop e rispondono solo sulla macchina dove gira: il PC non è sempre
+   acceso, e i bridge self-hosted con `bbctl` avrebbero voluto la cifratura end-to-end
+   di Beeper dentro l'Hub. Le reti si collegano "su questo dispositivo", quindi i bridge
+   girano sul VPS e non nel cloud di Beeper.
+2. **Una tab Inbox nell'Hub**, e Hermes sui messaggi con la fase 5.
+3. **Reti**: WhatsApp, Instagram, LinkedIn, le altre che usi; WeChat se si trova una
+   strada senza rischio per l'account (punto 6).
 
-**Fatto quando** (da confermare nel progetto): un messaggio WhatsApp è leggibile e
-rispondibile da dove si è deciso al punto 2; Instagram dopo due settimane di WhatsApp
-stabile.
+**Fatto quando**: un messaggio WhatsApp è leggibile e rispondibile dalla tab Inbox;
+Instagram e LinkedIn collegati e stabili per due settimane.
 
 ### Fase 5: Hermes sull'inbox (5-7 giorni)
 
@@ -291,9 +291,15 @@ Prese il 2026-09-25:
 - **Mirroring su Discord** delle sessioni vocali: tolto con la fase 1, come da
   piano. Le trascrizioni ora sono nell'app.
 
+Prese il 2026-09-29:
+
+- **Beeper Desktop sul VPS**, reti collegate sul dispositivo (fase 4).
+- **Tab Inbox** nell'Hub, poi Hermes sui messaggi (fase 5).
+- **Reti**: WhatsApp, Instagram, LinkedIn e le altre che usi; WeChat se fattibile.
+
 Ancora aperte:
 
-- **Come integrare Beeper**, vedi fase 4.
+- **WeChat**, vedi punto 6.
 
 ## 10. Fase 0: completata il 2026-09-25
 
@@ -527,6 +533,46 @@ comando, che `opencode` rifiuta (quindi parte da `bash -lc`); dentro i suoi
 terminali OpenCode esporta la propria password nell'ambiente, cosa accettabile
 perché lì si è già root.
 
+## 15. Fase 4: costruita il 2026-09-29, in attesa del login a Beeper
+
+**Beeper sul VPS.** AppImage 4.3.152 estratta in `/opt/beeper/<versione>`
+(`deploy/beeper/install.sh`, aggiornamenti a mano), utente di sistema `beeper`, dati
+in `/var/lib/beeper`, servizio `beeper-desktop`. Gira sotto `xvfb-run` sul display
+:99. Senza GPU la finestra resta invisibile e Beeper non parte davvero: compare solo
+con il rendering software (`--use-gl=angle --use-angle=swiftshader
+--enable-unsafe-swiftshader`); `--disable-gpu` non basta. Occupa 400-700 MB. Il
+login e il collegamento delle reti si fanno una volta dal PC: `beeper-screen`
+(acceso a mano, si spegne dopo 45 minuti) mostra lo schermo virtuale con noVNC su
+loopback, raggiunto con un tunnel SSH. Remote Access di Beeper resta spento.
+
+**Come l'Hub parla con Beeper.** OAuth con PKCE: l'Hub chiede l'accesso e Beeper apre
+una finestra di approvazione (sulla schermata remota, dal PC); la richiesta resta
+aperta finché non si risponde. Il token (30 giorni di default: scegliere la scadenza
+più lunga) resta in hub.db e il telefono non lo vede mai. Un solo WebSocket con gli
+eventi di Beeper alimenta l'app aperta (SSE) e le notifiche: solo messaggi nuovi di
+altri, una per chat ogni 20 s, mai per chat silenziate, a bassa priorità o già aperte
+sul telefono. Foto, vocali e file passano dall'Hub, che chiede a Beeper solo i suoi
+media e mai altri file del server.
+
+**La tab Inbox.** Elenco chat con ricerca, non lette, filtro per rete, aggiornato in
+diretta; gli account da ricollegare in evidenza. Una chat: messaggi con foto, video,
+vocali (con la trascrizione quando Beeper la dà), file, reazioni, risposte citate,
+messaggi precedenti; risposta a un messaggio, dettatura, invio (nell'audit la
+lunghezza, mai il testo). Aprire una chat la segna come letta, come sul telefono: la
+conferma di lettura arriva all'altra persona. Beeper compare nella tab Server (stato,
+riavvio, journal) e nel contract check.
+
+Provato con un Beeper finto nelle forme dell'API 5.0 (`test_inbox.py`, e l'app in
+locale): collegamento con rifiuto e approvazione, elenco, chat, invio con la copia
+di Beeper che sostituisce il messaggio provvisorio, risposta, messaggi precedenti,
+stati di configurazione. Trovato così un caso che i test non coprivano: con Beeper
+già loggato e l'Hub non ancora collegato, Beeper risponde 401 anche alla domanda
+sullo stato, che l'Hub leggeva come errore. Da provare con le chat vere.
+
+Resta da fare, dall'utente, dal PC: accedere a Beeper, collegare WhatsApp (QR dal
+telefono), Instagram e LinkedIn "su questo dispositivo", approvare l'Hub. Poi:
+riconnettere una rete dall'app (l'API di login dei bridge esiste), WeChat.
+
 ## Riepilogo
 
 | Fase | Cosa ottieni | Stima |
@@ -536,5 +582,5 @@ perché lì si è già root.
 | 2 | Stato del server, log, cron, costi, notifiche push — **fatta** | 1 g |
 | 3 | Vault Obsidian e file dal telefono — **fatta** | 1 g |
 | + | Hey Hermes, terminale e OpenCode dall'app, dietro Face ID — **fatta** | 1 g |
-| 4 | Chat da Beeper (WhatsApp, Instagram, ...), poi WeChat | da stimare |
+| 4 | Chat da Beeper (WhatsApp, Instagram, LinkedIn) nella tab Inbox — **costruita**, manca il login a Beeper | 1 g |
 | 5 | Hermes che legge, riassume e risponde ai messaggi, con la tua conferma | 5-7 gg |
